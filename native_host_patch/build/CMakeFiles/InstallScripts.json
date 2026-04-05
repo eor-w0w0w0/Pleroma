@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

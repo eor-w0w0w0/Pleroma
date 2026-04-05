@@ -1,0 +1,6 @@
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/SoloPlayNativeHostPatch.dir
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/XINPUT9_1_0.dir
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/dxva2.dir
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/deploy_proxy.dir
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/edit_cache.dir
+/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles/rebuild_cache.dir
