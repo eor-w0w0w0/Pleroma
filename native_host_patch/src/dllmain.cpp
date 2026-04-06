@@ -908,7 +908,7 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
 static int try_register_validation_callbacks()
 {
     void *lan_client = read_global_pointer(darktide::lan::kLanClientGlobalRva);
-    void *browser_transport = read_ptr_field(lan_client, darktide::lan::kLanClientBrowserTransportOffset);
+    void *browser_transport = resolve_browser_transport(lan_client);
     void *control_transport = read_ptr_field(lan_client, darktide::lan::kLanClientTransportOffset);
 
     g_validation.lan_client = lan_client;

@@ -13,6 +13,37 @@ Therefore the likely path forward is not “call hidden host API”, but:
 3. Register custom outer callbacks on the surviving transport registry rather than replacing stock ones.
 4. Synthesize the missing host-side message flow.
 
+## VT2-guided conclusion
+
+Installed VT2 binary analysis materially strengthened the host-side direction:
+
+- VT2 still ships a real Lua-exposed `create_lan_lobby(...)` path.
+- It sits directly next to `join_lan_lobby(...)` and `create_lobby_browser(...)`.
+- Its constructor performs host/create field initialization, generates a lobby id, registers multiple callbacks immediately, and enters a host/create state.
+
+What that means for Darktide:
+
+- a byte-for-byte transplant is not realistic.
+- a behavior-level port is realistic.
+
+So the best host-side plan is now:
+
+1. use VT2 as the reference for the missing host bootstrap *shape*
+2. recreate that shape in Darktide against Darktide’s own `LanLobby` fields, callback tables, and session host path
+3. hand off to Darktide’s already-existing post-bootstrap lobby/session machinery as early as possible
+
+## Parallel strike-team/session direction
+
+In parallel to the LAN/browser work, Darktide source now suggests a second viable direction:
+
+1. keep the current strike-team party state intact
+2. continue to use `PartyImmateriumManager.join_game_session()` as the top-level entrypoint
+3. redirect `PartyImmateriumMissionSessionBoot` at the point where it fetches dedicated server details
+4. provide a player-hosted target description instead of backend dedicated-server details
+5. reuse the existing browser/lobby/client/session boot path from there if possible
+
+This makes the strike-team path look less like “invent a new session flow” and more like “replace the dedicated-server-details phase with a player-hosted equivalent”.
+
 ## Most plausible native plan
 
 ### Stage 1: Observe runtime state
@@ -320,6 +351,13 @@ Safety gates on those flags:
 - browser transport callback vfunc must look plausible
 - control callback must already be registered successfully
 - browser transport must appear valid for 3 consecutive worker polls before registration is attempted
+
+Latest browser attachment correction:
+
+- browser transport resolution no longer trusts `LanClient+0x18` first
+- it now prefers the recovered `create_wan_client` owner chain:
+  - global owner -> `+0x418` nested object -> `+0x68` backend transport
+- `LanClient+0x18` remains only a fallback source
 
 ## First Two-Client Discovery Smoke Test
 

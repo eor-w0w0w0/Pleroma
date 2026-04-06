@@ -82,6 +82,8 @@ Reverse-engineering artifacts:
 - `src/darktide_wan_client_api.h` contains the inferred script-facing `LanClient` wrapper and underlying `LanTransport` backend references
 - `src/darktide_connectionless_api.h` contains inferred connectionless envelope constants, endpoint layout, and token encoding helpers
 - `implementation_strategy.md` summarizes the current synthetic-host direction implied by the reversing work
+- `darktide_strike_team_path_notes.md` tracks the source-level party/session path already used for strike-team session following
+- `vt2_player_hosted_notes.md` and `vt2_binary_lan_notes.md` track the VT2 side of the comparison
 
 Immediate reversing targets:
 1. hidden host-side lobby creation function

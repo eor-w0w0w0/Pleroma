@@ -938,6 +938,36 @@ mod:command("solo_rpcdump", "Dump known host/bootstrap RPC metadata", function (
 	mod:notify(mod:localize("msg_rpcdump_done"))
 end)
 
+mod:command("solo_partydump", "Dump current strike-team / session state", function ()
+	local party_manager = Managers.party_immaterium
+	local connection_manager = Managers.connection
+	local multiplayer_session = Managers.multiplayer_session
+	local connection_client = connection_manager and connection_manager._connection_client
+	local connection_host = connection_manager and connection_manager._connection_host
+	local party_game_state = party_manager and party_manager.party_game_state and party_manager:party_game_state() or nil
+	local all_members = party_manager and party_manager.all_members and party_manager:all_members() or nil
+
+	mod:dump({
+		party_id = party_manager and party_manager.party_id and party_manager:party_id() or nil,
+		current_game_session_id = party_manager and party_manager.current_game_session_id and party_manager:current_game_session_id() or nil,
+		current_game_session_mission_data = party_manager and party_manager.current_game_session_mission_data and party_manager:current_game_session_mission_data() or nil,
+		game_session_in_progress = party_manager and party_manager.game_session_in_progress and party_manager:game_session_in_progress() or false,
+		have_received_game_state = party_manager and party_manager.have_recieved_game_state and party_manager:have_recieved_game_state() or false,
+		party_game_state = party_game_state,
+		all_members = all_members,
+		num_other_members = party_manager and party_manager.num_other_members and party_manager:num_other_members() or 0,
+		connection_client = tostring(connection_client),
+		connection_host = tostring(connection_host),
+		connection_client_host_type = connection_client and connection_client.host_type and connection_client:host_type() or nil,
+		connection_client_matched_game_session_id = connection_client and connection_client.matched_game_session_id and connection_client:matched_game_session_id() or nil,
+		connection_client_initial_party_id = connection_client and connection_client.initial_party_id and connection_client:initial_party_id() or nil,
+		multiplayer_session_host_type = multiplayer_session and multiplayer_session.host_type and multiplayer_session:host_type() or nil,
+		multiplayer_session_has_joined_host = multiplayer_session and multiplayer_session.has_joined_host and multiplayer_session:has_joined_host() or nil,
+	}, "solo_partydump", 3)
+
+	mod:notify(mod:localize("msg_partydump_done"))
+end)
+
 mod:command("solo_lan_browser_refresh", "Create/refresh a persistent LAN browser for native validation", function ()
 	local browser = ensure_validation_browser()
 

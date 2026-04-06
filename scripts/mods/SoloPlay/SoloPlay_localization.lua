@@ -231,6 +231,9 @@ return {
 	msg_rpcdump_done = {
 		en = "Dumped host bootstrap RPC info to the console log.",
 	},
+	msg_partydump_done = {
+		en = "Dumped strike-team / session state to the console log.",
+	},
 	msg_browser_create_failed = {
 		en = "Failed to create LAN browser.",
 	},
