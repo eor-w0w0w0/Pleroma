@@ -37,7 +37,10 @@ static constexpr DWORD OPEN_ALWAYS = 4;
 static constexpr DWORD FILE_ATTRIBUTE_NORMAL = 0x00000080;
 static constexpr DWORD FILE_END = 2;
 static constexpr DWORD PAGE_EXECUTE_READWRITE = 0x40;
+static constexpr DWORD MEM_COMMIT = 0x1000;
+static constexpr DWORD MEM_RESERVE = 0x2000;
 static constexpr int VALIDATION_WORKER_MAX_ATTEMPTS = 900;
+static constexpr DWORD VALIDATION_WORKER_POLL_MS = 3000;
 static constexpr WORD IMAGE_DOS_SIGNATURE = 0x5A4D;
 static constexpr DWORD IMAGE_NT_SIGNATURE = 0x00004550;
 static constexpr int IMAGE_DIRECTORY_ENTRY_EXPORT = 0;
@@ -180,6 +183,7 @@ using ThreadStartRoutineFn = DWORD (*)(LPVOID);
 using CreateThreadFn = HANDLE (*)(void *, size_t, ThreadStartRoutineFn, void *, DWORD, DWORD *);
 using VirtualProtectFn = BOOL (*)(void *, size_t, DWORD, DWORD *);
 using FlushInstructionCacheFn = BOOL (*)(void *, const void *, size_t);
+using VirtualAllocFn = void *(*)(void *, size_t, DWORD, DWORD);
 
 namespace patch {
 
@@ -214,6 +218,7 @@ struct RuntimeState {
     CreateThreadFn create_thread;
     VirtualProtectFn virtual_protect;
     FlushInstructionCacheFn flush_instruction_cache;
+    VirtualAllocFn virtual_alloc;
     darktide::packet::WriteBits32Fn write_bits32;
     darktide::packet::WriteBits64Fn write_bits64;
     darktide::packet::WriteBlobBitsFn write_blob_bits;
@@ -228,6 +233,7 @@ struct ValidationState {
     int control_callback_registered;
     int browser_callback_feature_enabled;
     int synthetic_discovery_feature_enabled;
+    int registration_capture_feature_enabled;
     int browser_callback_registered;
     unsigned long control_registration_token;
     unsigned long browser_registration_token;
@@ -236,6 +242,9 @@ struct ValidationState {
     void *lan_client;
     void *browser_transport;
     void *control_transport;
+    void *captured_browser_object;
+    void *captured_browser_owner;
+    void *captured_browser_transport;
     unsigned long control_callback_count;
     unsigned long browser_callback_count;
     unsigned long long last_control_arg2;
@@ -248,6 +257,12 @@ struct ValidationState {
     unsigned long long last_browser_arg5;
     unsigned long long synthetic_lobby_id;
     unsigned int browser_transport_ready_observations;
+    int browser_post_registration_refresh_done;
+    void *last_logged_lan_client;
+    void *last_logged_control_transport;
+    void *last_logged_browser_transport;
+    void *last_logged_control_register_vfunc;
+    void *last_logged_browser_register_vfunc;
     int logged_browser_waiting_for_stability;
     int logged_browser_not_ready;
     int logged_control_not_ready;
@@ -271,8 +286,10 @@ static ValidationState g_validation = {};
 static constexpr int kDefaultEnableBrowserValidation = 0;
 // Keep synthetic discovery replies disabled until browser transport validation is stable.
 static constexpr int kDefaultEnableSyntheticDiscoverLobbyReply = 0;
+static constexpr int kDefaultEnableRegisterCaptureHook = 0;
 // Keep browser event 0x12 hook disabled until a safe detour/trampoline is added.
 static constexpr int kEnableBrowserEvent12Hook = 0;
+static constexpr int kEnableCreateLobbyBrowserCapture = 0;
 
 struct SyntheticDiscoverReplyPlan {
     unsigned short envelope_tag;
@@ -287,11 +304,31 @@ struct SyntheticDiscoverReplyPlan {
     unsigned long long browser_payload_lobby_id;
 };
 
+struct SyntheticJoinAcceptPlan {
+	unsigned long long lobby_id;
+	unsigned long long source_peer_id;
+	unsigned short source_port;
+	int accepted;
+};
+
+struct SyntheticAdmissionRecordPlan {
+	unsigned long long peer_id;
+	unsigned short port;
+};
+
 struct InlineHookPatch {
     void *target;
     BYTE original[16];
     unsigned int length;
 };
+
+struct BrowserCaptureHookState {
+	InlineHookPatch patch;
+	int installed;
+	void *trampoline;
+};
+
+static BrowserCaptureHookState g_browser_capture_hook = {};
 
 static inline PEB *current_peb()
 {
@@ -468,6 +505,8 @@ static void set_synthetic_browser_name(SyntheticDiscoverReplyPlan *plan, const c
 static bool is_plausible_runtime_pointer(void *pointer);
 static bool copy_bytes(BYTE *dst, const BYTE *src, unsigned int count);
 static bool send_synthetic_discover_reply_explicit(void *browser_transport, const darktide::connectionless::SockAddrIn6Like *destination, const SyntheticDiscoverReplyPlan &plan);
+static void load_runtime_feature_flags();
+static void unregister_validation_browser_callback();
 
 static SyntheticDiscoverReplyPlan make_synthetic_discover_reply_plan(unsigned long long descriptor_key)
 {
@@ -510,11 +549,91 @@ static void set_synthetic_browser_name(SyntheticDiscoverReplyPlan *plan, const c
     }
 }
 
+static void build_ipv4_mapped_sockaddr(darktide::connectionless::SockAddrIn6Like *out_address, unsigned int ipv4_host_order, unsigned short port_host_order)
+{
+	if (!out_address) {
+		return;
+	}
+
+	for (unsigned int i = 0; i < sizeof(*out_address); ++i) {
+		reinterpret_cast<BYTE *>(out_address)[i] = 0;
+	}
+
+	out_address->family = 0x17;
+	out_address->port_be = static_cast<unsigned short>(((port_host_order & 0x00FF) << 8) | ((port_host_order & 0xFF00) >> 8));
+	out_address->address[10] = 0xFF;
+	out_address->address[11] = 0xFF;
+	out_address->address[12] = static_cast<BYTE>((ipv4_host_order >> 24) & 0xFF);
+	out_address->address[13] = static_cast<BYTE>((ipv4_host_order >> 16) & 0xFF);
+	out_address->address[14] = static_cast<BYTE>((ipv4_host_order >> 8) & 0xFF);
+	out_address->address[15] = static_cast<BYTE>(ipv4_host_order & 0xFF);
+}
+
+static bool upsert_synthetic_peer_address(void *address_table_owner, unsigned long long peer_id, const darktide::connectionless::SockAddrIn6Like *address)
+{
+	if (!address_table_owner || !address) {
+		return false;
+	}
+
+	auto upsert = reinterpret_cast<darktide::transport::PeerAddressUpsertFn>(
+		rva_to_ptr(g_runtime.patch_target_module, darktide::transport::kPeerAddressUpdateRva)
+	);
+
+	if (!upsert) {
+		return false;
+	}
+
+	upsert(address_table_owner, peer_id, address);
+	return true;
+}
+
+using BrowserRefreshInitFn = void (*)(void *browser);
+using BrowserRefreshNativeFn = void (*)(void *browser, int arg);
+
+static void maybe_prime_captured_browser(void *browser)
+{
+	if (!browser || !g_validation.synthetic_discovery_feature_enabled || g_validation.browser_post_registration_refresh_done) {
+		return;
+	}
+
+	auto init_helper = reinterpret_cast<BrowserRefreshInitFn>(rva_to_ptr(g_runtime.patch_target_module, darktide::browser::kBrowserRefreshInitHelperRva));
+	auto refresh_native = reinterpret_cast<BrowserRefreshNativeFn>(rva_to_ptr(g_runtime.patch_target_module, darktide::browser::kBrowserRefreshNativeRva));
+
+	if (!init_helper || !refresh_native) {
+		return;
+	}
+
+	BYTE *browser_bytes = reinterpret_cast<BYTE *>(browser);
+
+	if (browser_bytes[darktide::browser::kLanLobbyBrowserRefreshInitializedOffset] == 0) {
+		init_helper(browser);
+		browser_bytes[darktide::browser::kLanLobbyBrowserRefreshInitializedOffset] = 1;
+		*reinterpret_cast<unsigned int *>(browser_bytes + darktide::browser::kLanLobbyBrowserRefreshIntervalOffset) = 0x40400000;
+	}
+
+	refresh_native(browser, 0);
+	g_validation.browser_post_registration_refresh_done = 1;
+	write_log_line("browser post-registration refresh triggered");
+}
+
 static unsigned long long compute_synthetic_lobby_id()
 {
     if (g_validation.synthetic_lobby_id != 0) {
         return g_validation.synthetic_lobby_id;
     }
+
+	void *connection_manager = read_global_pointer(0x012A4250);
+	if (is_plausible_runtime_pointer(connection_manager)) {
+		void *engine_lobby = read_ptr_field(connection_manager, 0x20);
+		if (is_plausible_runtime_pointer(engine_lobby)) {
+			unsigned long long maybe_lobby_id = *reinterpret_cast<unsigned long long *>(engine_lobby);
+			if (maybe_lobby_id != 0) {
+				g_validation.synthetic_lobby_id = maybe_lobby_id;
+				write_hex_line("synthetic lobby id from engine lobby = ", g_validation.synthetic_lobby_id);
+				return g_validation.synthetic_lobby_id;
+			}
+		}
+	}
 
     const unsigned long long seed = reinterpret_cast<ULONG_PTR>(g_validation.lan_client)
         ^ reinterpret_cast<ULONG_PTR>(g_validation.browser_transport)
@@ -582,6 +701,10 @@ static void *resolve_browser_transport_from_lan_client(void *lan_client)
 
 static void *resolve_browser_transport(void *lan_client)
 {
+	if (is_plausible_runtime_pointer(g_validation.captured_browser_transport)) {
+		return g_validation.captured_browser_transport;
+	}
+
 	void *browser_transport = resolve_browser_transport_from_owner_chain();
 
 	if (browser_transport) {
@@ -783,6 +906,24 @@ static bool install_inline_jump64(void *target, void *replacement, InlineHookPat
     return true;
 }
 
+static void *create_trampoline_for_inline_jump64(void *target, unsigned int patch_length)
+{
+	if (!g_runtime.virtual_alloc || !target || patch_length == 0) {
+		return nullptr;
+	}
+
+	BYTE *trampoline = reinterpret_cast<BYTE *>(g_runtime.virtual_alloc(nullptr, patch_length + 16, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+
+	if (!trampoline) {
+		return nullptr;
+	}
+
+	copy_bytes(trampoline, reinterpret_cast<const BYTE *>(target), patch_length);
+	write_absolute_jump64(trampoline + patch_length, reinterpret_cast<BYTE *>(target) + patch_length);
+
+	return trampoline;
+}
+
 static bool remove_inline_jump64(const InlineHookPatch *patch)
 {
     if (!g_runtime.virtual_protect || !patch || !patch->target || patch->length == 0) {
@@ -805,6 +946,36 @@ static bool remove_inline_jump64(const InlineHookPatch *patch)
     }
 
     return true;
+}
+
+static void record_captured_browser_object(void *browser_object)
+{
+	if (!browser_object) {
+		return;
+	}
+
+	g_validation.captured_browser_object = browser_object;
+	g_validation.captured_browser_owner = read_ptr_field(browser_object, darktide::lan::kLanLobbyBrowserEntryHashOwnerOffset);
+	g_validation.captured_browser_transport = read_ptr_field(browser_object, darktide::lan::kLanLobbyBrowserTransportOffset);
+
+	write_hex_line("captured browser object = ", reinterpret_cast<ULONG_PTR>(g_validation.captured_browser_object));
+	write_hex_line("captured browser owner = ", reinterpret_cast<ULONG_PTR>(g_validation.captured_browser_owner));
+	write_hex_line("captured browser transport = ", reinterpret_cast<ULONG_PTR>(g_validation.captured_browser_transport));
+}
+
+static void maybe_install_create_lobby_browser_capture_hook()
+{
+	if (!kEnableCreateLobbyBrowserCapture || g_browser_capture_hook.installed || !g_runtime.patch_target_module) {
+		return;
+	}
+
+	void *target = rva_to_ptr(g_runtime.patch_target_module, darktide::browser::kCreateLobbyBrowserRegisterSiteRva);
+	if (!target) {
+		return;
+	}
+
+	write_log_line("create_lobby_browser capture hook requested but not implemented yet");
+	write_hex_line("create_lobby_browser register site = ", reinterpret_cast<ULONG_PTR>(target));
 }
 
 static void *resolve_vfunc_if_plausible(void *object, unsigned long offset)
@@ -831,6 +1002,53 @@ static void *resolve_vfunc_if_plausible(void *object, unsigned long offset)
 
 using RegisterOuterCallbackFn = void *(*)(void *transport, void *out_handle, unsigned int registration_class, void *callback, void *context);
 using UnregisterCallbackTokenFn = void (*)(void *transport, unsigned int token);
+
+using RegisterCaptureHookFn = void *(*)(void *transport, void *out_handle, unsigned int registration_class, void *callback, void *context);
+
+static void *registration_capture_hook(void *transport, void *out_handle, unsigned int registration_class, void *callback, void *context)
+{
+	if (callback == rva_to_ptr(g_runtime.patch_target_module, darktide::browser::kBrowserConnectionlessThunkRva) && registration_class == 1) {
+		write_log_line("registration capture hook saw browser callback");
+		write_hex_line("registration capture callback thunk = ", reinterpret_cast<ULONG_PTR>(callback));
+		record_captured_browser_object(context);
+		g_validation.browser_transport = transport;
+		write_hex_line("registration capture transport = ", reinterpret_cast<ULONG_PTR>(transport));
+	}
+
+	auto original = reinterpret_cast<RegisterCaptureHookFn>(g_browser_capture_hook.trampoline);
+	return original ? original(transport, out_handle, registration_class, callback, context) : nullptr;
+}
+
+static void maybe_install_registration_capture_hook()
+{
+	if (!g_validation.registration_capture_feature_enabled || g_browser_capture_hook.installed || !g_runtime.patch_target_module) {
+		return;
+	}
+
+	void *target = rva_to_ptr(g_runtime.patch_target_module, darktide::transport::kRegisterOuterCallbackImplRva);
+	if (!target) {
+		return;
+	}
+
+	static constexpr unsigned int kPatchLength = 16;
+	void *trampoline = create_trampoline_for_inline_jump64(target, kPatchLength);
+
+	if (!trampoline) {
+		write_log_line("registration capture trampoline allocation failed");
+		return;
+	}
+
+	if (!install_inline_jump64(target, reinterpret_cast<void *>(registration_capture_hook), &g_browser_capture_hook.patch)) {
+		write_log_line("registration capture hook install failed");
+		return;
+	}
+
+	g_browser_capture_hook.installed = 1;
+	g_browser_capture_hook.trampoline = trampoline;
+	write_log_line("registration capture hook installed");
+	write_hex_line("registration capture target = ", reinterpret_cast<ULONG_PTR>(target));
+	write_hex_line("registration capture trampoline = ", reinterpret_cast<ULONG_PTR>(trampoline));
+}
 
 static int validation_control_callback(void *context, void *arg2, unsigned long long arg3, void *arg4, unsigned long long arg5, void *arg6)
 {
@@ -882,7 +1100,8 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
         write_hex_line("validation browser reader = ", reinterpret_cast<ULONG_PTR>(reader));
     }
 
-    if (event_code == darktide::connectionless::ConnectionlessKind_DiscoverLobby && state->synthetic_discovery_feature_enabled) {
+    if (event_code == 0x11 && state->synthetic_discovery_feature_enabled) {
+		write_log_line("synthetic browser reply trigger hit on event 0x11");
         darktide::connectionless::SockAddrIn6Like destination = {};
 
         if (!resolve_transport_peer_address(state->browser_transport, source_id, &destination)) {
@@ -892,13 +1111,14 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
         }
 
         SyntheticDiscoverReplyPlan plan = make_synthetic_discover_reply_plan(compute_synthetic_lobby_id());
+        write_hex_line("synthetic discover planned lobby id = ", plan.descriptor_key);
 
         if (send_synthetic_discover_reply_explicit(state->browser_transport, &destination, plan)) {
-            write_log_line("synthetic discover reply sent");
+            write_log_line("synthetic browser reply sent from event 0x11");
             write_hex_line("synthetic discover source id = ", source_id);
             write_hex_line("synthetic discover lobby id = ", plan.descriptor_key);
         } else {
-            write_log_line("synthetic discover reply send failed");
+            write_log_line("synthetic browser reply send failed from event 0x11");
         }
     }
 
@@ -908,7 +1128,13 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
 static int try_register_validation_callbacks()
 {
     void *lan_client = read_global_pointer(darktide::lan::kLanClientGlobalRva);
-    void *browser_transport = resolve_browser_transport(lan_client);
+    void *browser_transport = nullptr;
+
+    if (g_validation.browser_callback_feature_enabled && g_validation.registration_capture_feature_enabled) {
+        browser_transport = is_plausible_runtime_pointer(g_validation.captured_browser_transport) ? g_validation.captured_browser_transport : nullptr;
+    } else {
+        browser_transport = resolve_browser_transport(lan_client);
+    }
     void *control_transport = read_ptr_field(lan_client, darktide::lan::kLanClientTransportOffset);
 
     g_validation.lan_client = lan_client;
@@ -921,11 +1147,21 @@ static int try_register_validation_callbacks()
 
     auto *register_control = reinterpret_cast<RegisterOuterCallbackFn>(resolve_vfunc_if_plausible(control_transport, darktide::transport::kRegisterOuterCallbackVfuncOffset));
 
-    write_hex_line("validation lan client = ", reinterpret_cast<ULONG_PTR>(lan_client));
-    write_hex_line("validation control transport = ", reinterpret_cast<ULONG_PTR>(control_transport));
+    if (g_validation.last_logged_lan_client != lan_client) {
+        g_validation.last_logged_lan_client = lan_client;
+        write_hex_line("validation lan client = ", reinterpret_cast<ULONG_PTR>(lan_client));
+    }
+
+    if (g_validation.last_logged_control_transport != control_transport) {
+        g_validation.last_logged_control_transport = control_transport;
+        write_hex_line("validation control transport = ", reinterpret_cast<ULONG_PTR>(control_transport));
+    }
 
     if (register_control) {
-        write_hex_line("validation register control vfunc = ", reinterpret_cast<ULONG_PTR>(register_control));
+        if (g_validation.last_logged_control_register_vfunc != reinterpret_cast<void *>(register_control)) {
+            g_validation.last_logged_control_register_vfunc = reinterpret_cast<void *>(register_control);
+            write_hex_line("validation register control vfunc = ", reinterpret_cast<ULONG_PTR>(register_control));
+        }
         g_validation.logged_control_not_ready = 0;
     } else if (!g_validation.logged_control_not_ready) {
         write_log_line("validation control transport not ready");
@@ -959,12 +1195,26 @@ static int try_register_validation_callbacks()
         write_hex_line("validation control token = ", g_validation.control_registration_token);
     }
 
+	if (!g_validation.browser_callback_feature_enabled && g_validation.browser_callback_registered) {
+		unregister_validation_browser_callback();
+		g_validation.browser_transport_ready_observations = 0;
+		g_validation.logged_browser_not_ready = 0;
+		g_validation.logged_browser_waiting_for_stability = 0;
+	}
+
     if (g_validation.browser_callback_feature_enabled && g_validation.control_callback_registered) {
         auto *register_browser = reinterpret_cast<RegisterOuterCallbackFn>(resolve_vfunc_if_plausible(browser_transport, darktide::transport::kRegisterOuterCallbackVfuncOffset));
 
         if (register_browser) {
-            write_hex_line("validation browser transport = ", reinterpret_cast<ULONG_PTR>(browser_transport));
-            write_hex_line("validation register browser vfunc = ", reinterpret_cast<ULONG_PTR>(register_browser));
+            if (g_validation.last_logged_browser_transport != browser_transport) {
+                g_validation.last_logged_browser_transport = browser_transport;
+                write_hex_line("validation browser transport = ", reinterpret_cast<ULONG_PTR>(browser_transport));
+            }
+
+            if (g_validation.last_logged_browser_register_vfunc != reinterpret_cast<void *>(register_browser)) {
+                g_validation.last_logged_browser_register_vfunc = reinterpret_cast<void *>(register_browser);
+                write_hex_line("validation register browser vfunc = ", reinterpret_cast<ULONG_PTR>(register_browser));
+            }
             if (g_validation.browser_transport_ready_observations < 0xFFFFFFFFu) {
                 g_validation.browser_transport_ready_observations += 1;
             }
@@ -1006,6 +1256,7 @@ static int try_register_validation_callbacks()
             write_log_line("validation browser callback registered");
             write_hex_line("validation browser handle = ", reinterpret_cast<ULONG_PTR>(handle));
             write_hex_line("validation browser token = ", g_validation.browser_registration_token);
+			maybe_prime_captured_browser(g_validation.captured_browser_object);
         }
     }
 
@@ -1023,6 +1274,7 @@ static int try_register_validation_callbacks()
 static bool send_synthetic_discover_reply_explicit(void *browser_transport, const darktide::connectionless::SockAddrIn6Like *destination, const SyntheticDiscoverReplyPlan &plan)
 {
     if (!g_validation.synthetic_discovery_feature_enabled || !browser_transport || !destination) {
+		write_log_line("synthetic discover reply skipped (feature disabled or missing transport/destination)");
         return false;
     }
 
@@ -1049,7 +1301,10 @@ static bool send_synthetic_discover_reply_explicit(void *browser_transport, cons
     write_hex_line("synthetic discover destination port_be = ", destination->port_be);
     log_byte_line("synthetic discover destination addr = ", destination->address, sizeof(destination->address));
 
-    return send_explicit(browser_transport, destination, 0, packet, packet_size) != 0;
+	int result = send_explicit(browser_transport, destination, 0, packet, packet_size);
+	write_hex_line("synthetic discover explicit send result = ", result);
+
+    return result != 0;
 }
 
 static void unregister_validation_control_callback()
@@ -1107,6 +1362,8 @@ static DWORD validation_worker_thread(LPVOID)
     write_log_line("validation worker thread started");
 
     for (int attempt = 0; attempt < VALIDATION_WORKER_MAX_ATTEMPTS; ++attempt) {
+		load_runtime_feature_flags();
+
         int result = try_register_validation_callbacks();
 
         if (result != 0) {
@@ -1328,12 +1585,25 @@ static bool sibling_file_exists(HMODULE module, const WCHAR *file_name)
 
 static void load_runtime_feature_flags()
 {
+	int old_browser = g_validation.browser_callback_feature_enabled;
+	int old_discovery = g_validation.synthetic_discovery_feature_enabled;
+	int old_capture = g_validation.registration_capture_feature_enabled;
+
     g_validation.browser_callback_feature_enabled = kDefaultEnableBrowserValidation;
     g_validation.synthetic_discovery_feature_enabled = kDefaultEnableSyntheticDiscoverLobbyReply;
+    g_validation.registration_capture_feature_enabled = kDefaultEnableRegisterCaptureHook;
 
     if (!g_runtime.self_module) {
         return;
     }
+
+    const bool host_test_mode = sibling_file_exists(g_runtime.self_module, L"SoloPlayNativeHostPatch.host_test_enabled");
+
+    if (host_test_mode) {
+	    g_validation.browser_callback_feature_enabled = 1;
+	    g_validation.synthetic_discovery_feature_enabled = 1;
+	    g_validation.registration_capture_feature_enabled = 1;
+	}
 
     if (sibling_file_exists(g_runtime.self_module, L"SoloPlayNativeHostPatch.enable_browser_callback")) {
         g_validation.browser_callback_feature_enabled = 1;
@@ -1344,8 +1614,21 @@ static void load_runtime_feature_flags()
         g_validation.browser_callback_feature_enabled = 1;
     }
 
-    write_hex_line("feature browser callback = ", g_validation.browser_callback_feature_enabled);
-    write_hex_line("feature discovery reply = ", g_validation.synthetic_discovery_feature_enabled);
+    if (sibling_file_exists(g_runtime.self_module, L"SoloPlayNativeHostPatch.enable_registration_capture")) {
+        g_validation.registration_capture_feature_enabled = 1;
+    }
+
+	if (old_browser != g_validation.browser_callback_feature_enabled) {
+		write_hex_line("feature browser callback = ", g_validation.browser_callback_feature_enabled);
+	}
+
+	if (old_discovery != g_validation.synthetic_discovery_feature_enabled) {
+		write_hex_line("feature discovery reply = ", g_validation.synthetic_discovery_feature_enabled);
+	}
+
+	if (old_capture != g_validation.registration_capture_feature_enabled) {
+		write_hex_line("feature registration capture = ", g_validation.registration_capture_feature_enabled);
+	}
 }
 
 static void write_log_line(const char *message)
@@ -1398,6 +1681,7 @@ static void initialize_runtime()
     g_runtime.create_thread = reinterpret_cast<CreateThreadFn>(resolve_export(g_runtime.kernel32_module, "CreateThread"));
     g_runtime.virtual_protect = reinterpret_cast<VirtualProtectFn>(resolve_export(g_runtime.kernel32_module, "VirtualProtect"));
     g_runtime.flush_instruction_cache = reinterpret_cast<FlushInstructionCacheFn>(resolve_export(g_runtime.kernel32_module, "FlushInstructionCache"));
+    g_runtime.virtual_alloc = reinterpret_cast<VirtualAllocFn>(resolve_export(g_runtime.kernel32_module, "VirtualAlloc"));
     g_runtime.write_bits32 = reinterpret_cast<darktide::packet::WriteBits32Fn>(rva_to_ptr(g_runtime.patch_target_module, darktide::packet::kWriteBits32Rva));
     g_runtime.write_bits64 = reinterpret_cast<darktide::packet::WriteBits64Fn>(rva_to_ptr(g_runtime.patch_target_module, darktide::packet::kWriteBits64Rva));
     g_runtime.write_blob_bits = reinterpret_cast<darktide::packet::WriteBlobBitsFn>(rva_to_ptr(g_runtime.patch_target_module, darktide::packet::kWriteBlobBitsRva));
@@ -1559,6 +1843,8 @@ extern "C" DLL_EXPORT int SoloPlayHostPatch_Initialize()
     patch::log_known_rva("channel envelope thunk", darktide::lan::kLanLobbyChannelEnvelopeThunkRva);
 
     patch::log_runtime_lan_state();
+    patch::maybe_install_create_lobby_browser_capture_hook();
+    patch::maybe_install_registration_capture_hook();
     patch::start_validation_worker();
 
     patch::log_string_probe("join_lan_lobby");

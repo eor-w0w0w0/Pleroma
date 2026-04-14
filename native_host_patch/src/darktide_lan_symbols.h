@@ -59,6 +59,7 @@ static constexpr unsigned long kLanLobbyOuterConnectCallbackRva = 0x0056E4F0;
 static constexpr unsigned long kLanLobbyCreateChannelCallbackRva = 0x0056EE70;
 static constexpr unsigned long kLanLobbyRemoveMemberHelperRva = 0x0056E430;
 static constexpr unsigned long kLanLobbyChannelDispatchRva = 0x0056E6E0;
+static constexpr unsigned long kLanLobbyJoinReplyHandlerRva = 0x0056EBC6;
 static constexpr unsigned long kLanConnectionlessSendConnectRequestRva = 0x0056EFF0;
 static constexpr unsigned long kLanConnectionlessSendDiscoveryRva = 0x0056F2E0;
 static constexpr unsigned long kLanConnectionlessParserRva = 0x0056F5D0;
@@ -119,6 +120,12 @@ static constexpr unsigned long kLanMemberDataPointerOffset = 0x38;
 static constexpr unsigned long kLanMemberStagingDataSizeOffset = 0x48;
 static constexpr unsigned long kLanMemberStagingDataCapacityOffset = 0x4C;
 static constexpr unsigned long kLanMemberStagingDataPointerOffset = 0x50;
+
+// Temporary admission record passed to 0x14056E0D0.
+static constexpr unsigned long kLanAdmissionRecordSize = 0x60;
+static constexpr unsigned long kLanAdmissionPeerIdOffset = 0x00;
+static constexpr unsigned long kLanAdmissionBufferOwnerAOffset = 0x40;
+static constexpr unsigned long kLanAdmissionBufferOwnerBOffset = 0x58;
 
 // LanLobbyBrowser object.
 static constexpr unsigned long kLanLobbyBrowserVtableRva = 0x00F1F2F8;

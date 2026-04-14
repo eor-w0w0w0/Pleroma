@@ -230,3 +230,266 @@ Why this is promising:
 - the session/join protocol (`rpc_request_join_game_session`, slot reservation, claim slot, sync) already exists after the connection is made
 
 So the best strike-team path currently looks like a **session-boot redirection problem**, not a full session-stack reinvention problem.
+
+## Experimental host compatibility patch now added
+
+The first minimal post-connect compatibility set has now been wired into
+`mods/SoloPlay/scripts/mods/SoloPlay/experimental/connection_host.lua`.
+
+Added on `rpc_ready_to_receive_local_profiles(...)` / `rpc_client_entered_connected_state(...)`:
+
+1. `ProfileSynchronizerHost.register_rpcs(channel_id)`
+2. `ProfileSynchronizerHost.peer_connected(peer_id, channel_id)`
+3. initial host profile sync to the joining peer via `sync_player_profile(...)`
+4. `package_synchronization:synchronizer_host():add_peer(peer_id)`
+5. `rpc_sync_host_local_players(...)` to the joining peer
+6. `rpc_player_connected(...)` fanout between the joining peer and already-connected peers
+7. `rpc_peer_joined_session(...)` fanout between the joining peer and already-connected peers
+
+Added on disconnect / removal side:
+
+1. queued `"disconnected"` events for host-initiated kick/disconnect paths
+2. `package_synchronization:synchronizer_host():remove_peer(peer_id)`
+3. `ProfileSynchronizerHost.peer_disconnected(peer_id, channel_id)`
+4. `rpc_player_disconnected(...)` fanout to remaining peers
+5. `rpc_peer_left_session(...)` fanout to remaining peers
+
+Additional host-loop compatibility fix:
+
+6. `ExperimentalConnectionHost.update(dt)` now ticks `ProfileSynchronizerHost:update(dt)` instead of being a pure no-op
+
+Rationale:
+
+- stock `ProfileSynchronizerHost` relies on its per-frame `update()` to flush RPC queues and finalize profile sync state
+- without ticking it, the earlier profile-sync compatibility additions would not progress in practice
+
+Intent:
+
+- satisfy the smallest host-side expectations the stock `ConnectionClient`,
+  `ConnectionManager`, `ProfileSynchronizerClient`, and `MultiplayerSession.client_joined`
+  paths appear to have after a peer reaches connected state
+
+This is still not a full stock-quality host implementation, but it removes several
+obvious missing integration steps from the experimental strike-team host path.
+
+## Reserve / claim replies are already good enough
+
+Client-side source review confirms:
+
+- `rpc_reserve_slots_reply(channel_id, success)` only gates a boolean transition
+- `rpc_claim_slot_reply(channel_id, success)` only gates a boolean transition
+- neither state validates slot counts, slot ids, or reservation tokens
+
+So the current experimental host replies of:
+
+- `rpc_reserve_slots_reply(channel_id, true)`
+- `rpc_claim_slot_reply(channel_id, true)`
+
+are already sufficient for the immediate client-side contract.
+
+Practical implication:
+
+- reserve/claim is not the high-value area to refine right now
+- the bigger value is still in:
+  - `rpc_sync_local_players_reply` quality
+  - profile sync content
+  - package sync completion
+
+## Boot-time host promotion now mirrored
+
+`experimental/player_hosted_session_boot.lua` now mirrors the two clearest stock host-promotion calls from `SessionHost.init(...)`:
+
+1. `GameSession.make_game_session_host(engine_gamesession)` when a game session object is present
+2. `engine_lobby:set_game_session_host(Network.peer_id())`
+
+Rationale:
+
+- this is the lowest-risk stock host promotion signal in the codebase
+- it should make the experimental player-hosted boot look more like a real host session to later loading/mechanism/session code
+
+## Minimal host event contract confirmed
+
+From `ConnectionManager._update_host(...)`, the experimental host only needs to emit:
+
+- `"connecting"` with:
+  - `channel_id`
+  - `peer_id`
+
+- `"connected"` with:
+  - `channel_id`
+  - `peer_id`
+  - `player_sync_data`
+
+- `"disconnected"` with:
+  - `channel_id`
+  - `peer_id`
+  - optional `game_reason`
+  - optional `engine_reason`
+
+That is enough for `ConnectionManager` to drive:
+
+- `_add_client(...)`
+- `MultiplayerSession.client_joined(...)`
+- `_remove_client(...)`
+- `MultiplayerSession.client_disconnected(...)`
+
+So the experimental host path does not need a new top-level manager contract; it needs more complete stock-compatible data and RPC fanout behind those existing event names.
+
+## Loading/package sync gate confirmed
+
+Source review of `LoadingHost`, `PackageSynchronizerHost`, and `ProfileSynchronizerHost` confirms:
+
+- `MultiplayerSession.client_joined(...)` is not enough by itself
+- the remote peer only progresses once `LoadingHost` sees:
+  - level load complete for the spawn group
+  - `profile_sync_host:profiles_synced(...) == true`
+  - `package_sync_host:peers_synced(...) == true`
+
+So the current experimental compatibility patch is pointed at the correct gate:
+
+- `ProfileSynchronizerHost.peer_connected(...)`
+- host profile sync via `sync_player_profile(...)`
+- `rpc_sync_host_local_players(...)`
+- `PackageSynchronizerHost.add_peer(peer_id)`
+
+The remaining uncertainty is mainly the *quality* of the temporary sync data we provide
+(slots/profile chunks/player data), not which managers or RPC families are required.
+
+## Loading-host gate is now mapped
+
+The stock host loading path for a remote peer is now clear:
+
+1. `Managers.loading:add_client(channel_id)` creates a `LoadingRemoteStateMachine`
+2. client requests a spawn group
+3. host places the peer into `SpawnQueue`
+4. host spawn group enters `wait_for_level`
+5. both host and remote must report `rpc_finished_loading_level`
+6. host moves the group to `wait_for_sync`
+7. host enables package sync for that peer
+8. host waits for:
+   - `profiles_synced(...)`
+   - `peers_synced(...)`
+9. for the initial group, host waits until `Managers.loading:end_load()` releases that spawn group
+10. remote loading state then adds the peer to game session and sends `rpc_group_loaded`
+
+Practical implication:
+
+- even with a good experimental host connection/session path, the peer will still stall unless the hosted path really reaches stock `LoadingHost` remote-state behavior
+- this is one of the next likely runtime bottlenecks after connection/session sync becomes good enough
+
+## Important loading-host creation result
+
+Stock source confirms `LoadingHost` creation is already on the exact `ConnectionHost` branch in:
+
+- `scripts/managers/multiplayer/multiplayer_session_manager.lua:333-345`
+
+Specifically:
+
+- if `session_boot:state() == "ready"`
+- and `connection_class_name == "ConnectionHost"`
+
+then `MultiplayerSessionManager.update()` itself creates:
+
+- `LoadingHost:new(...)`
+- `Managers.loading:set_host(loading_host)`
+
+Implication:
+
+- the experimental strike-team host path should not need a manual `Managers.loading:set_host(...)` patch
+- the more important runtime question is whether the new hosted path actually reaches that stock `ready -> ConnectionHost` branch cleanly
+
+## Important narrowing result
+
+Source review now strongly suggests the experimental host’s `"connected"` event path is already sufficient to create the stock `LoadingRemoteStateMachine` through:
+
+- `ConnectionManager._update_host(...)`
+- `_add_client(...)`
+- `MultiplayerSession.client_joined(...)`
+- `Managers.loading:add_client(channel_id)`
+
+So the next likely blockers are later in the pipeline, not at the event-contract boundary:
+
+- real lobby/channel scaffolding
+- promoted host/session-host state
+- loading/profile/package sync completion
+
+## Current host-side contract focus
+
+Source/binary review now suggests the strike-team hosted path is already aiming at the correct layer:
+
+- early host promotion via:
+  - `GameSession.make_game_session_host(...)`
+  - `engine_lobby:set_game_session_host(Network.peer_id())`
+
+- then the full connection-channel handshake through:
+  - version / boot / host type / mechanism / local player sync / slot reserve / slot claim / EAC / tick rate / profile sync / data sync / stats / connected check
+  - culminating in `rpc_client_entered_connected_state`
+
+Interpretation:
+
+- the biggest remaining work on the strike-team path is not high-level lobby state
+- it is making the experimental connection-channel handshake stock-compatible enough that the peer reaches `rpc_client_entered_connected_state` cleanly and the host can then hand off to loading/session stock paths
+
+## Sync-data quality improvements now applied
+
+In `experimental/connection_host.lua`, the worst placeholder fields in
+`rpc_sync_local_players(...)` have now been improved:
+
+Now more stock-like:
+
+- `slot_array`
+  - uses `Managers.player:claim_slot()` when available instead of naive `1..n`
+
+- `player_instance_id_array`
+  - uses stable per-peer/per-local-player string ids instead of a fresh `Application.guid()` every time
+
+Still provisional:
+
+- `profile_chunks_array`
+  - now uses a minimal stock-like profile stub when no better source is available:
+    - valid player archetype name
+    - empty `loadout_item_ids`
+    - empty `talents`
+  - this should round-trip through stock `pack_profile` / `unpack_profile` much better than raw `{}`
+
+Current code-side direction:
+
+- `ExperimentalConnectionHost` now routes remote profile chunk generation through a dedicated helper (`best_remote_profile_chunks(...)`)
+- `best_remote_profile_chunks(...)` now prefers cached current strike-team member profiles first:
+  - `Managers.party_immaterium:all_members()`
+  - `member:account_id()` match
+  - `member:profile()`
+- then falls back to cached presence/profile data from `Managers.presence:get_presence(account_id):character_profile()` when available
+- fallback remains a minimal stock-like stub when no cached profile is available
+- intended next improvement is to substitute a cached real profile source there without rewriting the host event/session contract again
+- runtime observability now logs which path was used:
+  - `party_member`
+  - `presence`
+  - `stub`
+
+## Package-sync implication of better remote profiles
+
+Source review now suggests:
+
+- package sync resolves from the reconstructed runtime profile created from `profile_chunks_array`
+- especially from `profile.visual_loadout` and related archetype/talent-derived fields
+
+So better remote profile chunks should improve package sync automatically.
+
+But this does **not** replace the need for stock package-sync seeding:
+
+- `package_synchronizer_host:add_peer(peer_id)`
+- later `LoadingHost` -> `package_sync_host:enable_peers(...)`
+
+Therefore the right priority remains:
+
+1. keep stock package-sync seeding/enablement in place
+2. improve remote profile realism
+3. avoid package-specific ad-hoc hacks unless profile-based improvement proves insufficient
+
+Pass-through from the joining client and already close to stock:
+
+- `account_id_array`
+- `character_id_array`
+- `player_session_id_array`
+- `last_mission_id`

@@ -13,7 +13,9 @@ local PickupSystem = require("scripts/extension_systems/pickups/pickup_system")
 local PickupSettings = require("scripts/settings/pickup/pickup_settings")
 local UISoundEvents = require("scripts/settings/ui/ui_sound_events")
 local WwiseGameSyncSettings = require("scripts/settings/wwise_game_sync/wwise_game_sync_settings")
+local MultiplayerSession = require("scripts/managers/multiplayer/multiplayer_session")
 local SoloPlaySettings = mod:io_dofile("SoloPlay/scripts/mods/SoloPlay/SoloPlaySettings")
+local ExperimentalPlayerHostedSessionBoot = mod:io_dofile("SoloPlay/scripts/mods/SoloPlay/experimental/player_hosted_session_boot")
 mod:io_dofile("SoloPlay/scripts/mods/SoloPlay/havoc")
 mod:io_dofile("SoloPlay/scripts/mods/SoloPlay/workaround")
 
@@ -224,6 +226,78 @@ local function can_start_private_normal_game()
 	return true
 end
 
+local function should_use_experimental_party_hosted_launch()
+	local status = native_feature_status()
+
+	return status.host_test_enabled == true and get_party_player_count() > 1
+end
+
+local function start_experimental_party_hosted_session(mission_context)
+	set_native_flag("SoloPlayNativeHostPatch.host_test_enabled", true)
+
+	local browser = ensure_validation_browser()
+	if browser then
+		call_browser_method(browser, "refresh")
+	end
+
+	local engine_lobby = current_engine_lobby()
+	local multiplayer_session_manager = Managers.multiplayer_session
+	local party_manager = Managers.party_immaterium
+	local native_status = native_feature_status()
+
+	if not engine_lobby or not multiplayer_session_manager then
+		return false, "msg_party_host_missing_lobby"
+	end
+
+	mod:dump({
+		action = "start_experimental_party_hosted_session",
+		native_status = native_status,
+		browser_status = collect_browser_status(browser),
+		mission_context = mission_context,
+		engine_lobby = tostring(engine_lobby),
+		engine_lobby_id = engine_lobby.id and engine_lobby:id() or nil,
+		party_id = party_manager and party_manager.party_id and party_manager:party_id() or nil,
+		party_members = party_manager and party_manager.all_members and party_manager:all_members() or nil,
+	}, "solo_party_hosted_start", 3)
+
+	multiplayer_session_manager:clear_session_boot()
+
+	local new_session = MultiplayerSession:new()
+	local tick_rate = GameParameters.tick_rate or 30
+	local max_members = math.max(4, get_party_player_count())
+
+	multiplayer_session_manager._session_boot = ExperimentalPlayerHostedSessionBoot:new(
+		new_session,
+		engine_lobby,
+		HOST_TYPES.player,
+		tick_rate,
+		max_members,
+		engine_lobby:id()
+	)
+
+	local mechanism_manager = Managers.mechanism
+	local mission_settings = MissionTemplates[mission_context.mission_name]
+	local mechanism_name = mission_settings and mission_settings.mechanism_name or "adventure"
+	local mechanism_context = table.clone(mission_context)
+	local loading_manager = Managers.loading
+
+	mechanism_manager:change_mechanism(mechanism_name, mechanism_context)
+
+	mod:dump({
+		action = "start_experimental_party_hosted_session_post_boot",
+		session_boot = tostring(multiplayer_session_manager._session_boot),
+		session_boot_class = multiplayer_session_manager._session_boot and multiplayer_session_manager._session_boot.__class_name or nil,
+		session_boot_state = multiplayer_session_manager._session_boot and multiplayer_session_manager._session_boot.state and multiplayer_session_manager._session_boot:state() or nil,
+		session = tostring(multiplayer_session_manager._session),
+		loading_is_alive = loading_manager and loading_manager.is_alive and loading_manager:is_alive() or nil,
+		loading_is_host = loading_manager and loading_manager.is_host and loading_manager:is_host() or nil,
+		loading_host = loading_manager and tostring(loading_manager._loading_host) or nil,
+	}, "solo_party_hosted_post_boot", 3)
+
+	mod:echo("experimental party-hosted boot started: " .. tostring(mechanism_name))
+	return true
+end
+
 local function destroy_validation_browser()
 	local browser = mod._validation_lobby_browser
 	local wan_client = mod._validation_browser_client
@@ -379,12 +453,76 @@ local function set_native_flag(file_name, enabled)
 	return not native_flag_exists(file_name)
 end
 
+local function disable_all_native_host_flags()
+	local ok_host = set_native_flag("SoloPlayNativeHostPatch.host_test_enabled", false)
+	local ok_browser = set_native_flag("SoloPlayNativeHostPatch.enable_browser_callback", false)
+	local ok_reply = set_native_flag("SoloPlayNativeHostPatch.enable_discovery_reply", false)
+	local ok_capture = set_native_flag("SoloPlayNativeHostPatch.enable_registration_capture", false)
+
+	return ok_host and ok_browser and ok_reply and ok_capture
+end
+
 local function native_feature_status()
+	local host_test_enabled = native_flag_exists("SoloPlayNativeHostPatch.host_test_enabled")
+
 	return {
-		browser_callback = native_flag_exists("SoloPlayNativeHostPatch.enable_browser_callback"),
-		discovery_reply = native_flag_exists("SoloPlayNativeHostPatch.enable_discovery_reply"),
+		host_test_enabled = host_test_enabled,
+		browser_callback = host_test_enabled or native_flag_exists("SoloPlayNativeHostPatch.enable_browser_callback"),
+		discovery_reply = host_test_enabled or native_flag_exists("SoloPlayNativeHostPatch.enable_discovery_reply"),
+		registration_capture = host_test_enabled or native_flag_exists("SoloPlayNativeHostPatch.enable_registration_capture"),
 		path = get_binaries_path(),
 	}
+end
+
+local function dump_hosted_runtime_state(label)
+	local multiplayer_session_manager = Managers.multiplayer_session
+	local session_boot = multiplayer_session_manager and multiplayer_session_manager._session_boot
+	local session = multiplayer_session_manager and multiplayer_session_manager._session
+	local loading_manager = Managers.loading
+	local loading_host = loading_manager and loading_manager._loading_host
+
+	mod:dump({
+		label = label,
+		session_boot = tostring(session_boot),
+		session_boot_class = session_boot and session_boot.__class_name or nil,
+		session_boot_state = session_boot and session_boot.state and session_boot:state() or nil,
+		session = tostring(session),
+		host_type = multiplayer_session_manager and multiplayer_session_manager.host_type and multiplayer_session_manager:host_type() or nil,
+		loading_is_alive = loading_manager and loading_manager.is_alive and loading_manager:is_alive() or nil,
+		loading_is_host = loading_manager and loading_manager.is_host and loading_manager:is_host() or nil,
+		loading_host = tostring(loading_host),
+		loading_host_state = loading_host and loading_host._state or nil,
+		loading_host_clients = loading_host and loading_host._clients or nil,
+	}, label, 3)
+end
+
+local function schedule_hosted_runtime_dumps()
+	mod._hosted_runtime_dump_schedule = {
+		launched_at = Application and Application.time_since_launch and Application.time_since_launch() or 0,
+		next_index = 1,
+		offsets = { 1, 3, 6 },
+	}
+end
+
+local function update_hosted_runtime_dumps()
+	local schedule = mod._hosted_runtime_dump_schedule
+	if not schedule then
+		return
+	end
+
+	local now = Application and Application.time_since_launch and Application.time_since_launch() or 0
+	local index = schedule.next_index
+	local offset_t = schedule.offsets[index]
+
+	if not offset_t then
+		mod._hosted_runtime_dump_schedule = nil
+		return
+	end
+
+	if now >= schedule.launched_at + offset_t then
+		dump_hosted_runtime_state("solo_party_hosted_runtime_" .. tostring(index))
+		schedule.next_index = index + 1
+	end
 end
 
 local function maybe_prime_native_browser_transport()
@@ -660,12 +798,24 @@ end)
 local main_menu_want_solo_play = nil
 
 mod:hook(CLASS.StateMainMenu, "update", function (func, self, main_dt, main_t)
-	maybe_prime_native_browser_transport()
+	update_hosted_runtime_dumps()
 
 	if self._continue and not self:_waiting_for_synchronizations() then
 		if main_menu_want_solo_play then
 			local mode = main_menu_want_solo_play
 			main_menu_want_solo_play = nil
+
+			if mode == "normal_multiplayer" or mode == "havoc_multiplayer" then
+				local mission_context = mode == "havoc_multiplayer" and mod.gen_havoc_mission_context() or mod.gen_normal_mission_context()
+				local started_hosted, hosted_error_loc_key = start_experimental_party_hosted_session(mission_context)
+				if started_hosted then
+					local next_state, state_context = Managers.mechanism:wanted_transition()
+					return next_state, state_context
+				end
+
+				mod:notify(mod:localize(hosted_error_loc_key))
+				return func(self, main_dt, main_t)
+			end
 
 			local mission_context = {}
 			if mode == "havoc" then
@@ -680,6 +830,8 @@ mod:hook(CLASS.StateMainMenu, "update", function (func, self, main_dt, main_t)
 				SoloPlaySettings.custom_params_handlers[mission_context.mission_name](mission_context.mission_name, mission_context.custom_params)
 			end
 
+			disable_all_native_host_flags()
+			destroy_validation_browser()
 			Managers.multiplayer_session:boot_singleplayer_session()
 			Managers.mechanism:change_mechanism(mechanism_name, mission_context)
 			Managers.mechanism:trigger_event("all_players_ready")
@@ -696,7 +848,7 @@ mod:hook(CLASS.StateMainMenu, "update", function (func, self, main_dt, main_t)
 end)
 
 mod:hook(CLASS.StateGame, "update", function (func, self, dt)
-	maybe_prime_native_browser_transport()
+	update_hosted_runtime_dumps()
 	return func(self, dt)
 end)
 
@@ -763,6 +915,36 @@ mod.start_game = function (mode)
 		return
 	end
 
+	if mode == "normal_multiplayer" then
+		if get_party_player_count() <= 1 then
+			mod:notify(mod:localize("msg_private_requires_party"))
+			return
+		end
+
+		local started_hosted, hosted_error_loc_key = start_experimental_party_hosted_session(mod.gen_normal_mission_context())
+		if started_hosted then
+			return
+		end
+
+		mod:notify(mod:localize(hosted_error_loc_key))
+		return
+	end
+
+	if mode == "havoc_multiplayer" then
+		if get_party_player_count() <= 1 then
+			mod:notify(mod:localize("msg_private_requires_party"))
+			return
+		end
+
+		local started_hosted, hosted_error_loc_key = start_experimental_party_hosted_session(mod.gen_havoc_mission_context())
+		if started_hosted then
+			return
+		end
+
+		mod:notify(mod:localize(hosted_error_loc_key))
+		return
+	end
+
 	if mode == "normal" and not on_main_menu() then
 		if get_party_player_count() > 1 then
 			local started_private, private_error_loc_key = mod.start_private_normal_game()
@@ -797,6 +979,8 @@ mod.start_game = function (mode)
 		SoloPlaySettings.custom_params_handlers[mission_context.mission_name](mission_context.mission_name, mission_context.custom_params)
 	end
 
+	disable_all_native_host_flags()
+	destroy_validation_browser()
 	Managers.multiplayer_session:reset("Hosting SoloPlay session")
 	Managers.multiplayer_session:boot_singleplayer_session()
 
@@ -968,6 +1152,48 @@ mod:command("solo_partydump", "Dump current strike-team / session state", functi
 	mod:notify(mod:localize("msg_partydump_done"))
 end)
 
+mod:command("solo_sessionbootdump", "Dump the current multiplayer session boot object", function ()
+	local multiplayer_session_manager = Managers.multiplayer_session
+	local session_boot = multiplayer_session_manager and multiplayer_session_manager._session_boot
+	local session = multiplayer_session_manager and multiplayer_session_manager._session
+
+	mod:dump({
+		session_boot = tostring(session_boot),
+		session_boot_class = session_boot and session_boot.__class_name or nil,
+		session_boot_state = session_boot and session_boot.state and session_boot:state() or nil,
+		session = tostring(session),
+		session_class = session and session.__class_name or nil,
+		host_type = multiplayer_session_manager and multiplayer_session_manager.host_type and multiplayer_session_manager:host_type() or nil,
+		is_booting = multiplayer_session_manager and multiplayer_session_manager.is_booting_session and multiplayer_session_manager:is_booting_session() or nil,
+		is_ready = multiplayer_session_manager and multiplayer_session_manager.is_ready and multiplayer_session_manager:is_ready() or nil,
+	}, "solo_sessionbootdump", 3)
+
+	mod:notify(mod:localize("msg_sessionbootdump_done"))
+end)
+
+mod:command("solo_loadingdump", "Dump the current loading host/client state", function ()
+	local loading_manager = Managers.loading
+	local loading_host = loading_manager and loading_manager._loading_host
+	local loading_client = loading_manager and loading_manager._loading_client
+
+	mod:dump({
+		is_alive = loading_manager and loading_manager.is_alive and loading_manager:is_alive() or nil,
+		is_host = loading_manager and loading_manager.is_host and loading_manager:is_host() or nil,
+		is_client = loading_manager and loading_manager.is_client and loading_manager:is_client() or nil,
+		loading_host = tostring(loading_host),
+		loading_client = tostring(loading_client),
+		loading_host_state = loading_host and loading_host._state or nil,
+		loading_host_spawn_groups = loading_host and loading_host._spawn_groups or nil,
+		loading_host_spawned_peers = loading_host and loading_host._spawned_peers or nil,
+		loading_host_package_sync_enabled_peers = loading_host and loading_host._package_sync_enabled_peers or nil,
+		loading_host_clients = loading_host and loading_host._clients or nil,
+		loading_client_state = loading_client and loading_client:state() or nil,
+		spawn_group_id = loading_manager and loading_manager.spawn_group_id and loading_manager:spawn_group_id() or nil,
+	}, "solo_loadingdump", 3)
+
+	mod:notify(mod:localize("msg_loadingdump_done"))
+end)
+
 mod:command("solo_lan_browser_refresh", "Create/refresh a persistent LAN browser for native validation", function ()
 	local browser = ensure_validation_browser()
 
@@ -1008,19 +1234,32 @@ mod:command("solo_lan_browser_clear", "Destroy the persistent LAN browser used f
 end)
 
 mod:command("solo_native_host_test_enable", "Enable browser callback + synthetic discovery reply for next host launch", function ()
-	local ok_browser = set_native_flag("SoloPlayNativeHostPatch.enable_browser_callback", true)
-	local ok_reply = set_native_flag("SoloPlayNativeHostPatch.enable_discovery_reply", true)
+	local ok_host_test = set_native_flag("SoloPlayNativeHostPatch.host_test_enabled", true)
 
 	mod:dump(native_feature_status(), "solo_native_host_test_enable", 3)
-	mod:notify(mod:localize(ok_browser and ok_reply and "msg_native_host_test_enabled" or "msg_native_flag_error"))
+	mod:notify(mod:localize(ok_host_test and "msg_native_host_test_enabled" or "msg_native_flag_error"))
 end)
 
 mod:command("solo_native_host_test_disable", "Disable browser callback + synthetic discovery reply marker files", function ()
+	local ok_host_test = set_native_flag("SoloPlayNativeHostPatch.host_test_enabled", false)
 	local ok_browser = set_native_flag("SoloPlayNativeHostPatch.enable_browser_callback", false)
 	local ok_reply = set_native_flag("SoloPlayNativeHostPatch.enable_discovery_reply", false)
+	local ok_capture = set_native_flag("SoloPlayNativeHostPatch.enable_registration_capture", false)
 
 	mod:dump(native_feature_status(), "solo_native_host_test_disable", 3)
-	mod:notify(mod:localize(ok_browser and ok_reply and "msg_native_host_test_disabled" or "msg_native_flag_error"))
+	mod:notify(mod:localize(ok_host_test and ok_browser and ok_reply and ok_capture and "msg_native_host_test_disabled" or "msg_native_flag_error"))
+end)
+
+mod:command("solo_native_registration_capture_enable", "Enable only the native registration-capture hook for next launch", function ()
+	local ok_capture = set_native_flag("SoloPlayNativeHostPatch.enable_registration_capture", true)
+	mod:dump(native_feature_status(), "solo_native_registration_capture_enable", 3)
+	mod:notify(mod:localize(ok_capture and "msg_native_registration_capture_enabled" or "msg_native_flag_error"))
+end)
+
+mod:command("solo_native_registration_capture_disable", "Disable the native registration-capture hook marker file", function ()
+	local ok_capture = set_native_flag("SoloPlayNativeHostPatch.enable_registration_capture", false)
+	mod:dump(native_feature_status(), "solo_native_registration_capture_disable", 3)
+	mod:notify(mod:localize(ok_capture and "msg_native_registration_capture_disabled" or "msg_native_flag_error"))
 end)
 
 mod:command("solo_native_host_test_status", "Show native host discovery marker-file status", function ()

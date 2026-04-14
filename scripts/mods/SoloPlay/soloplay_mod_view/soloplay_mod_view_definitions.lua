@@ -118,6 +118,17 @@ local scenegraph_definition = {
 			0,
 		}
 	},
+	normal_start_multiplayer = {
+		parent = "normal_section",
+		vertical_alignment = "top",
+		horizontal_alignment = "center",
+		size = ButtonPassTemplates.default_button.size,
+		position = {
+			0,
+			835,
+			0,
+		}
+	},
 	havoc_section = {
 		parent = "canvas",
 		vertical_alignment = "top",
@@ -198,6 +209,17 @@ local scenegraph_definition = {
 		position = {
 			681.5,
 			790,
+			0,
+		}
+	},
+	havoc_start_multiplayer = {
+		parent = "havoc_section",
+		vertical_alignment = "top",
+		horizontal_alignment = "left",
+		size = ButtonPassTemplates.default_button.size,
+		position = {
+			681.5,
+			860,
 			0,
 		}
 	},
@@ -356,12 +378,18 @@ local widget_definitions = {
 	normal_start = UIWidget.create_definition(ButtonPassTemplates.default_button, "normal_start", {
 		original_text = mod:localize("button_start_normal"),
 	}),
+	normal_start_multiplayer = UIWidget.create_definition(ButtonPassTemplates.default_button, "normal_start_multiplayer", {
+		original_text = mod:localize("button_start_normal_multiplayer"),
+	}),
 	havoc_modifier_lock = UIWidget.create_definition(ButtonPassTemplates.terminal_button, "havoc_modifier_lock"),
 	havoc_randomize = UIWidget.create_definition(ButtonPassTemplates.default_button, "havoc_randomize", {
 		original_text = mod:localize("button_randomize"),
 	}),
 	havoc_start = UIWidget.create_definition(ButtonPassTemplates.default_button, "havoc_start", {
 		original_text = mod:localize("button_start_havoc"),
+	}),
+	havoc_start_multiplayer = UIWidget.create_definition(ButtonPassTemplates.default_button, "havoc_start_multiplayer", {
+		original_text = mod:localize("button_start_havoc_multiplayer"),
 	}),
 	normal_tip_text = UIWidget.create_definition({
 		{
@@ -380,6 +408,40 @@ local widget_definitions = {
 			}),
 		}
 	}, "normal_section"),
+	normal_multiplayer_tip_text = UIWidget.create_definition({
+		{
+			value_id = "normal_multiplayer_tip_text",
+			style_id = "normal_multiplayer_tip_text",
+			pass_type = "text",
+			value = mod:localize("tip_multiplayer_hosted"),
+			style = table.merge_recursive(table.clone(UIFontSettings.header_5), {
+				text_horizontal_alignment = "center",
+				text_vertical_alignment = "top",
+				offset = {
+					0,
+					620,
+					0,
+				}
+			}),
+		}
+	}, "normal_section"),
+	havoc_multiplayer_tip_text = UIWidget.create_definition({
+		{
+			value_id = "havoc_multiplayer_tip_text",
+			style_id = "havoc_multiplayer_tip_text",
+			pass_type = "text",
+			value = mod:localize("tip_multiplayer_hosted"),
+			style = table.merge_recursive(table.clone(UIFontSettings.header_5), {
+				text_horizontal_alignment = "center",
+				text_vertical_alignment = "top",
+				offset = {
+					0,
+					785,
+					0,
+				}
+			}),
+		}
+	}, "havoc_section"),
 }
 
 local function add_dropdown(id, section, x, y)

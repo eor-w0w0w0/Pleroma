@@ -70,6 +70,7 @@ Alternate proxy path:
   - opt-in marker files in `binaries/`:
     - `SoloPlayNativeHostPatch.enable_browser_callback`
     - `SoloPlayNativeHostPatch.enable_discovery_reply`
+    - `SoloPlayNativeHostPatch.enable_registration_capture`
   - both are off by default
 
 Reverse-engineering artifacts:

@@ -96,11 +96,17 @@ return {
 		ru = "Запуск обычной игры",
 		["zh-tw"] = "開始一般遊戲",
 	},
+	button_start_normal_multiplayer = {
+		en = "Start With Strike Team (Host)",
+	},
 	button_start_havoc = {
 		en = "Play Offline Custom Havoc",
 		["zh-cn"] = "开始浩劫游戏",
 		ru = "Запуск Верной смерти",
 		["zh-tw"] = "開始浩劫遊戲",
+	},
+	button_start_havoc_multiplayer = {
+		en = "Start Havoc With Strike Team (Host)",
 	},
 	button_randomize = {
 		en = "Regenerate",
@@ -204,6 +210,9 @@ return {
 		ru = "Примечание: некоторые параметры могут не поддерживаться, не иметь эффекта или вызывать вылеты!",
 		["zh-tw"] = "注意：某些選項可能不受支援、無效或導致遊戲崩潰。",
 	},
+	tip_multiplayer_hosted = {
+		en = "Experimental: starts a player-hosted mission for your current strike team instead of the normal solo/private path.",
+	},
 	msg_not_available = {
 		en = "Solo Play is currently unavailable",
 		["zh-cn"] = "单人游戏目前不可用",
@@ -225,6 +234,9 @@ return {
 	msg_havoc_strike_team_unavailable = {
 		en = "Custom Havoc with a strike team is not available yet. Offline custom Havoc still works.",
 	},
+	msg_party_host_missing_lobby = {
+		en = "Party-hosted launch needs an active engine lobby in the current hub session.",
+	},
 	msg_netdump_done = {
 		en = "Dumped network surfaces to the console log.",
 	},
@@ -233,6 +245,12 @@ return {
 	},
 	msg_partydump_done = {
 		en = "Dumped strike-team / session state to the console log.",
+	},
+	msg_sessionbootdump_done = {
+		en = "Dumped multiplayer session boot state to the console log.",
+	},
+	msg_loadingdump_done = {
+		en = "Dumped loading host/client state to the console log.",
 	},
 	msg_browser_create_failed = {
 		en = "Failed to create LAN browser.",
@@ -260,6 +278,12 @@ return {
 	},
 	msg_native_host_test_status = {
 		en = "Dumped native host test marker-file status.",
+	},
+	msg_native_registration_capture_enabled = {
+		en = "Enabled native registration-capture hook for the next launch.",
+	},
+	msg_native_registration_capture_disabled = {
+		en = "Disabled native registration-capture hook marker file.",
 	},
 	msg_native_flag_error = {
 		en = "Failed to update native host test marker files.",

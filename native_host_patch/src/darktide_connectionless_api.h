@@ -13,8 +13,14 @@ struct SockAddrIn6Like {
     unsigned int scope_id;
 };
 
+// This matches the stock 0x1c-byte Windows sockaddr_in6 layout used by Darktide.
+// For IPv4 addresses, stock builders encode an IPv4-mapped IPv6 address in
+// `address[0..15]` with the IPv4 bytes in the last four positions.
+
 using SendBroadcastFn = int (*)(void *backend, const void *buffer, unsigned int byte_len, unsigned int port);
 using SendExplicitFn = int (*)(void *backend, const SockAddrIn6Like *destination, unsigned int flags_or_route, const void *buffer, unsigned int byte_len);
+using BuildSockAddrIn6FromTextFn = void *(*)(SockAddrIn6Like *out_address, const char *text);
+using BuildIPv4MappedSockAddrIn6Fn = SockAddrIn6Like *(*)(SockAddrIn6Like *out_address, unsigned int ipv4_be, unsigned short port_be);
 
 static constexpr unsigned short kConnectionlessEnvelopeTag = 0x3EE5;
 static constexpr unsigned int kConnectionlessReserved24 = 0;
@@ -48,6 +54,10 @@ static constexpr unsigned char kDiscoverLobbyToken = EncodeKindToken(Connectionl
 static constexpr unsigned char kDiscoverLobbyReplyToken = EncodeKindToken(ConnectionlessKind_DiscoverLobbyReply);
 static constexpr unsigned char kBrowserEvent11Token = EncodeBrowserEventToken(0x11);
 static constexpr unsigned char kBrowserEvent13Token = EncodeBrowserEventToken(0x13);
+
+// Earliest currently identified host-side request-connection receive/parser window.
+static constexpr unsigned long kRequestConnectionReceiveParserStartRva = 0x003383D0;
+static constexpr unsigned long kRequestConnectionReceiveParserEndRva = 0x00338C52;
 
 // Outer envelope carries a fixed 0x25-byte text field after the 64-bit key.
 // Parser treatment indicates it is a fixed 36-byte text string plus NUL and is

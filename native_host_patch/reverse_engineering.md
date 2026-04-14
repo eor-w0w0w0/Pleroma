@@ -361,11 +361,49 @@ Known browser event handling in `0x14056f5d0`:
 - `0x13`
 - other values hit the stock unsupported/default path
 
+Latest live/browser-callback correction:
+
+- the first actionable synthetic-reply trigger should be observed browser callback event `0x11`, not the earlier guessed wire-level `0x12`
+- live runs showed browser callback events like `0x11`, `0x04`, `0x1C`, `0x30`, `0x09`
+- static re-analysis showed:
+  - `0x04` is request-connection-reply parsing
+  - `0x11/0x13` share the lobby/discovery parser path
+  - `0x1C`, `0x30`, `0x09` fall through the browser handler’s unexpected/default path
+
 Best hook points for synthetic `0x12` handling:
 
 - `0x14056f5d0` entry: best general hook point for real custom browser event handling
 - `0x14056f5fe` reject gate: best micro-patch point if the only goal is bypassing the stock `0x12` drop
 - `0x14056f5b0` is only the thunk and is not a good hook target
+
+## Browser backend capture pivot
+
+Latest runtime evidence showed that indirect browser-backend resolution from global/client fields remained unreliable.
+
+The current better strategy is:
+
+- capture the real `LanLobbyBrowser` object at creation time
+- then read:
+  - owner/back-pointer from `browser+0x48`
+  - backend transport from `browser+0x50`
+- and register/drive browser-specific logic from those concrete values
+
+Best current creation-site hook point:
+
+- `0x14048AF80`
+  - browser object already finalized
+  - backend transport already stored
+  - callback registration about to happen
+
+Alternative cleaner hook point:
+
+- common outer callback registration implementation `0x140351330`
+  - arguments include transport, out-handle, registration class, callback thunk, and context pointer
+  - by filtering `callback_thunk == 0x14056F5B0` and `reg_class == 1`, a hook here can capture the real browser object and backend transport without patching mid-function browser construction
+  - latest audit result:
+    - `0x14056F5B0` appears unique to the browser connectionless path in this build
+    - `0x140351330` only depends on the first 5 logical args and returns the original `out_handle` pointer unchanged
+    - the main fragility is ABI/trampoline correctness, not hidden extra arguments
 
 ### `establish_connection_to_server` limitations
 
@@ -424,10 +462,40 @@ Runtime caveat:
   - remote case scans the peer table for matching `u64 source_id`
   - on success it writes a real `sockaddr_in6` into the pending callback record
 
+Exact address blob format:
+
+- full `0x1c`-byte Windows `sockaddr_in6`
+- offsets:
+  - `+0x00..0x01` family = `0x17` (`AF_INET6`)
+  - `+0x02..0x03` port (network byte order)
+  - `+0x04..0x07` flowinfo = `0`
+  - `+0x08..0x17` IPv6 address bytes
+  - `+0x18..0x1b` scope_id = `0`
+
+IPv4 handling:
+
+- stock builders use IPv4-mapped IPv6 addresses:
+  - `00 00 00 00 00 00 00 00 00 00 FF FF aa bb cc dd`
+
+Important constraint:
+
+- a minimal “just port + IPv4 bytes” blob is not enough
+- Darktide stock parse/format helpers expect the full `0x1c` layout even though equality checks only compare:
+  - port
+  - address bytes at `+0x08..+0x17`
+
 Potentially important separate primitive:
 
 - `0x140353A80` is a stock “send request connection reply to %llx” helper that appears to send by `peer/source id` rather than explicit sockaddr
 - this is currently tied to the connection service, not confirmed reusable for browser `0x13`, but it is the strongest stock example of source-id-based reply transmission found so far
+
+Browser-side destination conclusion:
+
+- browser callback `source_id` is confirmed to be the correct key into the backend transport’s peer-address table
+- explicit browser reply sending can therefore use:
+  1. resolve `source_id -> sockaddr_in6`
+  2. call transport explicit send (`+0x30`) with flags `0`
+- no extra route/token object is required on that explicit send path
 
 ## Packet/bitstream helpers
 
@@ -540,6 +608,12 @@ Best current synthetic `0x13` browser-payload model:
   - `byte 0 = 0x27` (`browser event 0x13` token)
   - `bytes 1..8 = u64 lobby_id / descriptor key`
 
+Current confidence update:
+
+- browser handler paths consume only the `u64` after token `0x27`
+- no additional required event-`0x13` payload fields were found at that browser-handler layer
+- extra trailing bits may be tolerated, but do not appear required
+
 Semantics of that `u64` field:
 
 - it is a real `lobby_id`, not a peer id and not an arbitrary browser-only token
@@ -612,6 +686,71 @@ Additional global-scan result:
 
 - a stock inner `0x17` join-reply builder/emitter helper still exists at `0x1406c56f0`
 - however, no separate global stock sender for outer `0x13` was found
+
+## Join-request / join-reply refinement
+
+Best current Darktide hook target for synthetic join acceptance:
+
+- inner `LanLobby` dispatcher `0x14056E6E0`
+  - preferred over outer `0x14` envelope routing `0x14056F9C0`
+  - preferred over isolated send helpers like `0x14056E003`
+
+Reason:
+
+- `0x17` lands in the existing accept/deny path at `0x14056EBC6`
+- that path already drives local lobby state to `joined` / `failed`
+
+Important limitation:
+
+- synthetic `0x17` alone is not enough
+- later client handlers for:
+  - `0x19` (`lobby_members`)
+  - `0x15` (`lobby_member_data`)
+  require real member admission/state first
+
+Current best interpretation:
+
+- a host-side admission/state mutation step equivalent in effect to VT2 `0x1402347B0` is also required before post-join traffic becomes coherent
+
+Most concrete Darktide-native admission lead so far:
+
+- direct call to `0x14056E0D0(this, &temp_record, port)`
+
+Recovered minimum temp record contract:
+
+- record size: `0x60`
+- required fields:
+  - `+0x00 = u64 peer_id`
+  - `+0x40 = this+8`
+  - `+0x58 = this+8`
+- all other fields can be zero-safe initialized following the stock caller pattern
+
+Other required preconditions:
+
+- valid `this+0x68`
+- valid `this+0x70`
+- matching `peer_id -> sockaddr` entry already present in the address-source table behind `this+0x70`
+
+Observed successful effects of `0x14056E0D0`:
+
+- appends the live member record into `this+0x590/+0x598`
+- resolves/writes address data into the admitted record
+- sets `word [this+0x648] = 0x0101`
+- sets `byte [this+0x64A] = 1`
+
+This makes it the strongest current candidate for Darktide-native synthetic member admission.
+
+## Earliest stable peer+port path
+
+Current best candidate for the earliest host-side path where both a stable peer id and source port coexist is:
+
+- connectionless `request_connection` receive/parser block around `0x1403383D0-0x140338C52`
+
+Why this matters:
+
+- browser callback `0x11` gives a source id early, but not the full stable join admission context
+- inner join-request handling gives a port later, but by then the host has already committed to the join path
+- the request-connection receive/parser appears to be the earliest place where the host can know both the peer identity and the port needed for address upsert/admission
 
 ## GameSession host state
 

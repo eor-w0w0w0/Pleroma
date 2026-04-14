@@ -25,6 +25,13 @@ static constexpr unsigned long kResultEntrySize = 0x48;
 static constexpr unsigned long kBrowserConnectionlessThunkRva = 0x0056F5B0;
 static constexpr unsigned long kBrowserConnectionlessHandlerRva = 0x0056F5D0;
 static constexpr unsigned long kBrowserConnectionlessRejectGateRva = 0x0056F5FE;
+static constexpr unsigned long kCreateLobbyBrowserWrapperRva = 0x0048AEC0;
+static constexpr unsigned long kCreateLobbyBrowserRegisterSiteRva = 0x0048AF80;
+static constexpr unsigned long kBrowserRefreshLuaWrapperRva = 0x0048B1A0;
+static constexpr unsigned long kBrowserRefreshInitHelperRva = 0x0056FB60;
+static constexpr unsigned long kBrowserRefreshNativeRva = 0x0056F2E0;
+static constexpr unsigned long kLanLobbyBrowserRefreshInitializedOffset = 0xB0;
+static constexpr unsigned long kLanLobbyBrowserRefreshIntervalOffset = 0xB4;
 
 // Cached descriptor / browser-id notes:
 // - browser+0x78 points at a cached 64-bit descriptor/lobby key value

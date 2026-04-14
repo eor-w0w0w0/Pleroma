@@ -32,6 +32,81 @@ So the best host-side plan is now:
 2. recreate that shape in Darktide against Darktide’s own `LanLobby` fields, callback tables, and session host path
 3. hand off to Darktide’s already-existing post-bootstrap lobby/session machinery as early as possible
 
+### Missing-host-role split
+
+Current best decomposition:
+
+**Likely reusable stock Darktide pieces**
+- outer control / lightweight handshake listener
+- create-channel / bind / listener setup
+- outer channel-envelope routing
+- post-join lobby replication and dirty-flag senders
+
+**Likely synthetic pieces we still must recreate**
+- host discovery receive (`outer 0x12`)
+- host discovery-reply send (`outer 0x13`)
+- host join-request receive/accept (`inner 0x1c` -> `0x17`)
+
+This is a much narrower target than “rebuild all host networking”.
+
+### Join-side refinement
+
+Latest comparison against VT2 host-side join handling suggests:
+
+- the best Darktide hook point for synthetic join acceptance is the inner `LanLobby` dispatcher `0x14056E6E0`
+- specifically, synthetic handling should normalize/redirect missing inner `0x1c` request handling into the existing `0x17` accept/deny state path at `0x14056EBC6`
+
+Important caveat:
+
+- a synthetic `0x17` reply alone is not enough for coherent later traffic
+- host-side admission/state mutation equivalent to VT2’s pending->member promotion is also required so that later `0x19`, `0x14`, and `0x15` packets make sense to the client
+
+New Darktide-native admission lead:
+
+- `0x14056E0D0` now looks like a plausible direct synthetic admission/add primitive
+
+Current best recipe:
+
+1. prepare a zero-safe `0x60`-byte temp record
+2. set:
+   - `temp+0x00 = peer_id`
+   - owner/interface pointers at `temp+0x40` and `temp+0x58` to `this+8`
+3. pass desired port in `R8D`
+4. ensure `this+0x70` already contains a matching `peer_id -> sockaddr` entry
+5. call `0x14056E0D0(this, &temp, port)`
+
+If those preconditions hold, `0x14056E0D0` should:
+
+- append the live member record
+- resolve/write address data
+- set dirty flags that feed stock `0x19`, `0x14`, and `0x15` senders
+
+Important address-side detail:
+
+- the supporting `peer_id -> address` entry must use a full `0x1c` `sockaddr_in6`
+- for IPv4, stock code expects IPv4-mapped IPv6 form
+- a minimal shortened blob is not enough for stock parser/format helpers
+
+Current code-side primitive set now exists for later admission work:
+
+- build IPv4-mapped `sockaddr_in6`
+- upsert `peer_id -> address` via `0x140587380`
+- synthetic join accept plan struct
+- synthetic admission record plan struct
+
+## Current highest-impact strike-team host mismatch
+
+At the current level of implementation, the highest-impact remaining mismatch on the strike-team host path is:
+
+- remote `profile_chunks_array`
+
+Reason:
+
+- loading progression explicitly waits for profile sync completion
+- the current fallback is only a minimal stock-like stub, not a real remote profile
+
+So the next high-value refinement on the strike-team path is a better remote profile source, not reserve/claim semantics or additional top-level host events.
+
 ## Parallel strike-team/session direction
 
 In parallel to the LAN/browser work, Darktide source now suggests a second viable direction:
@@ -43,6 +118,15 @@ In parallel to the LAN/browser work, Darktide source now suggests a second viabl
 5. reuse the existing browser/lobby/client/session boot path from there if possible
 
 This makes the strike-team path look less like “invent a new session flow” and more like “replace the dedicated-server-details phase with a player-hosted equivalent”.
+
+Current narrowing result:
+
+- the experimental host’s `"connected"` event path is likely already enough to engage the stock `LoadingRemoteStateMachine`
+- so the most likely remaining blockers are not top-level connection-manager compatibility
+- they are instead later stock expectations around:
+  - real lobby/channel scaffolding
+  - host/session-host state
+  - loading/profile/package sync completion
 
 ## Most plausible native plan
 
@@ -92,6 +176,33 @@ Current send contracts:
 - explicit connectionless send (`+0x30`) is now strongly modeled as:
   - `bool send_explicit(backend, sockaddr_in6_like*, flags_or_route, buffer, byte_len)`
 
+Current synthetic split in code:
+
+- discovery uses `SyntheticDiscoverReplyPlan`
+- join acceptance now has a separate disabled `SyntheticJoinAcceptPlan`
+- this mirrors the current architectural conclusion that discovery and join acceptance are distinct missing host roles
+
+## Current best minimal synthetic host sequence
+
+The strictest likely ordering for a first minimally coherent player-host flow is now:
+
+1. Host browser callback sees actionable browser event `0x11`
+2. Host learns callback `source_id`
+3. Host resolves `source_id -> sockaddr_in6`
+4. Host sends synthetic outer browser reply (`0x13` path)
+5. Client proceeds into connection/request path
+6. Host reaches the earliest stable request-connection receive/parser path where peer id and port coexist
+7. Host upserts `peer_id -> sockaddr_in6` with `0x140587380`
+8. Host admits/adds the peer with `0x14056E0D0`
+9. Host sends synthetic inner `0x17` accept reply
+10. Stock `0x19 / 0x14 / 0x15` follow from dirty flags and existing senders
+
+Why this order matters:
+
+- `0x14056E0D0` requires the address-table entry to already exist
+- synthetic `0x17` alone is not enough
+- admitting first gives the later stock member/lobby senders coherent state to serialize
+
 Addressing fallback now known:
 
 - stock code also has a `u64 source_id -> sockaddr_in6` resolution path (`0x14056e0d0` + `0x140587380`)
@@ -99,6 +210,23 @@ Addressing fallback now known:
 - so future reply work may have two viable addressing strategies:
   1. resolve callback source id to explicit sockaddr and use `+0x30`
   2. find/reuse a peer-id-based send primitive if it can be generalized to browser traffic
+
+Current browser-side conclusion:
+
+- the browser callback `source_id` is now confirmed to be the correct key into the backend transport’s peer-address table
+- explicit browser reply sending can therefore use:
+  1. `source_id`
+  2. resolve `source_id -> sockaddr_in6` via the transport table
+  3. call explicit send (`+0x30`) with flags `0`
+
+This part of the discovery reply path is no longer speculative.
+
+Current status of the discovery responder:
+
+- structurally complete up to explicit send
+- remaining uncertainty is now runtime-only:
+  - whether the captured browser transport is the true live browser callback transport in the armed run
+  - whether the synthetic `0x13` frame is accepted end-to-end by the retail browser path
 
 Useful recovered framing detail:
 
@@ -124,12 +252,23 @@ Important semantic constraint:
 - it becomes the browser entry key and must stay consistent through later connect/join handling
 - so future synthetic discovery cannot use a throwaway random id unless the rest of the synthetic flow also consistently reuses it
 
+Latest live-event correction:
+
+- the first synthetic browser reply trigger should now be attempted on observed browser callback event `0x11`
+- not on the earlier guessed wire-level discovery id `0x12`
+
 Encouraging browser-visibility result:
 
 - current evidence suggests the first visible discovery milestone may only require:
   - a consistent `u64 lobby_id`
   - a valid fixed-width 0x25 browser name field
 - later `LanLobby` sync (`0x19`, `0x14`, `0x15`) is likely needed for real join/bootstrap, but not just to make a lobby appear in browser results
+
+Current seeding rule in code:
+
+- prefer a real engine-lobby id if one is already present
+- otherwise fall back to the existing stable synthetic `u64` seed
+- keep the browser-visible name synthetic for the first visibility milestone unless a better source is proven necessary
 
 Disabled scaffold status:
 
@@ -344,6 +483,9 @@ Runtime file flags now supported:
 - create `binaries/SoloPlayNativeHostPatch.enable_discovery_reply`
   - enables browser callback registration
   - enables synthetic `0x13` reply sending on observed browser event `0x12`
+- create `binaries/SoloPlayNativeHostPatch.enable_registration_capture`
+  - enables an opt-in hook on the shared callback registration implementation
+  - captures the real browser/context/backend transport when the browser callback thunk is registered
 
 Safety gates on those flags:
 
@@ -351,6 +493,29 @@ Safety gates on those flags:
 - browser transport callback vfunc must look plausible
 - control callback must already be registered successfully
 - browser transport must appear valid for 3 consecutive worker polls before registration is attempted
+- native worker now polls more slowly and logs transport state only on change to reduce startup overhead
+- registration capture remains fully off unless the dedicated marker file is present
+
+Runtime cleanup behavior:
+
+- if browser-host feature flags are turned off while the game is still running, the native worker now unregisters the browser callback automatically
+- this is intended to keep later solo/offline launches from inheriting stale browser-host test state in the same process
+
+Latest testing ergonomics improvement:
+
+- the native worker now hot-reloads feature flags during polling instead of reading them only once at startup
+- `Start With Strike Team (Host)` now automatically enables the main host-test mode flag before it boots the hosted path
+- `Start With Strike Team (Host)` now also creates/refreshes the host-side browser object immediately in the same run
+- `Start With Strike Team (Host)` now dumps a combined snapshot of:
+  - native feature state
+  - browser status
+  - engine lobby id
+  - mission context
+- immediately after installing the experimental host boot it also dumps:
+  - current `_session_boot`
+  - current `_session`
+  - current `Managers.loading` host/client state
+- practical effect: the host no longer needs a restart just to arm the native browser/discovery side
 
 Latest browser attachment correction:
 
@@ -358,6 +523,40 @@ Latest browser attachment correction:
 - it now prefers the recovered `create_wan_client` owner chain:
   - global owner -> `+0x418` nested object -> `+0x68` backend transport
 - `LanClient+0x18` remains only a fallback source
+
+Next likely pivot if runtime still fails to arm browser callbacks:
+
+- stop resolving browser transport indirectly
+- capture the real `LanLobbyBrowser` object at creation time at `0x14048AF80`
+- derive the backend transport directly from `browser+0x50`
+
+Cleaner variant of that pivot now identified:
+
+- hook the shared callback registration implementation at `0x140351330`
+- filter for:
+  - `callback_thunk == 0x14056F5B0`
+  - `reg_class == 1`
+- capture:
+  - transport (`RCX`)
+  - browser/context pointer (5th arg)
+
+Current behavior after capture:
+
+- once the registration-capture hook sees the browser callback registration, the browser resolver now prefers that captured transport over any indirect global-source heuristic
+- if registration capture is explicitly enabled, browser callback arming now waits for a captured browser transport instead of falling back to indirect resolution first
+
+Latest browser event-delivery nudge:
+
+- after successful browser callback registration, native code now performs a one-shot browser refresh on the captured browser object using the real native refresh path
+- rationale: ensure at least one post-registration refresh occurs in the same run, instead of depending on perfect manual timing
+
+This is likely safer than patching the middle of `create_lobby_browser` itself.
+
+Latest confidence increase:
+
+- browser thunk `0x14056F5B0` appears unique in this build
+- the registration helper at `0x140351330` only uses the first 5 logical args and preserves the `out_handle` return convention
+- so the registration-capture hook is now the cleanest known browser attachment strategy for option 1
 
 ## First Two-Client Discovery Smoke Test
 
@@ -368,6 +567,7 @@ Host client setup:
    - `SoloPlayNativeHostPatch.enable_discovery_reply`
 2. Launch with the normal `dxva2` override.
 3. Wait at least `20-30s` after reaching menu/hub for delayed patch load and worker polling.
+4. Browser priming is manual to reduce menu/login overhead; use `/solo_native_host_prime` only after the host is fully loaded.
 
 Second client setup:
 

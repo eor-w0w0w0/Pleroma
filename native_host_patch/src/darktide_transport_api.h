@@ -37,6 +37,7 @@ using OuterCallbackFn = int (*)(void *context, unsigned long long peer_id, unsig
 using ChannelCallbackFn = int (*)(void *context, unsigned long long peer_id, unsigned int channel_or_listener_id, unsigned int message_id, void *packet_reader);
 
 // Known registered callbacks.
+static constexpr unsigned long kRegisterOuterCallbackImplRva = 0x00351330;
 static constexpr unsigned long kLanConnectOuterCallbackRva = 0x0056E4F0;
 static constexpr unsigned long kLanCreateChannelCallbackRva = 0x0056EE70;
 static constexpr unsigned long kLanConnectionlessOuterThunkRva = 0x0056F5B0;
@@ -66,6 +67,8 @@ static constexpr unsigned long kPeerAddressEntriesOffset = 0x88;
 static constexpr unsigned long kPeerAddressEntrySize = 0x30;
 static constexpr unsigned long kPeerAddressEntryPeerIdOffset = 0x00;
 static constexpr unsigned long kPeerAddressEntrySockAddrOffset = 0x08;
+
+using PeerAddressUpsertFn = void (*)(void *table_owner, unsigned long long peer_id, const void *sockaddr_blob);
 
 // Confirmed unregister methods seen in stock cleanup.
 static constexpr unsigned long kUnregisterCallbackTokenVfuncOffset = 0x68;

@@ -176,3 +176,35 @@ VT2 does not give us a safe byte-for-byte transplant target, but it does give us
 - discovery/join receive plumbing active in the same LAN subsystem
 
 That makes VT2 the best reference for a Darktide behavior-level reimplementation of the missing host-side LAN bootstrap.
+
+## Missing host-role classification in Darktide
+
+After comparing VT2 host listener families to Darktide’s surviving callback families:
+
+### Darktide likely still has usable analogues for
+
+- outer control / lightweight handshake listener
+  - VT2: `0x140233B90/0x140233BB0`
+  - Darktide analogue: `0x14056E4F0`
+
+- create-channel / bind / listener setup
+  - VT2: `0x140233E00/0x140233E30`
+  - Darktide analogue: `0x14056EE70`
+
+- outer channel-envelope routing
+  - VT2: later host routing path
+  - Darktide analogue: `0x14056F9C0/0x14056F9E0`
+
+- post-join lobby replication and dispatch
+  - VT2: host-side post-join family
+  - Darktide analogue: `0x14056E6C0/0x14056E6E0`
+
+### Darktide appears to lack convincing stock host analogues for
+
+- host discovery receive (`discover_lobby` / outer `0x12`)
+- host discovery-reply send (`discover_lobby_reply` / outer `0x13`)
+- host join-request receive/accept (active receive of inner `0x1c` and positive `0x17` reply)
+
+## Practical implication
+
+The synthetic host work should focus on recreating only those missing host roles, while reusing the surviving Darktide callback families for the rest of the path.

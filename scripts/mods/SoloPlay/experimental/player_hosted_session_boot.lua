@@ -1,4 +1,5 @@
-local ExperimentalConnectionHost = require("scripts/mods/SoloPlay/experimental/connection_host")
+local mod = get_mod("SoloPlay")
+local ExperimentalConnectionHost = mod:io_dofile("SoloPlay/scripts/mods/SoloPlay/experimental/connection_host")
 local SessionBootBase = require("scripts/multiplayer/session_boot_base")
 
 local STATES = table.enum("idle", "ready", "failed")
@@ -21,17 +22,28 @@ ExperimentalPlayerHostedSessionBoot.init = function (self, event_object, engine_
     local event_delegate = connection_manager:network_event_delegate()
     local approve_channel_delegate = connection_manager:approve_channel_delegate()
 
-    self._connection_host = ExperimentalConnectionHost:new(
-        event_delegate,
-        approve_channel_delegate,
-        engine_lobby,
-        host_type,
-        tick_rate,
-        max_members,
-        optional_session_id
-    )
+	self._connection_host = ExperimentalConnectionHost:new(
+		event_delegate,
+		approve_channel_delegate,
+		engine_lobby,
+		host_type,
+		tick_rate,
+		max_members,
+		optional_session_id
+	)
 
-    self:_set_state(STATES.ready)
+	local game_session_manager = Managers.state and Managers.state.game_session
+	local engine_gamesession = game_session_manager and game_session_manager.game_session and game_session_manager:game_session()
+
+	if engine_gamesession and GameSession and GameSession.make_game_session_host then
+		GameSession.make_game_session_host(engine_gamesession)
+	end
+
+	if engine_lobby.set_game_session_host then
+		engine_lobby:set_game_session_host(Network.peer_id())
+	end
+
+	self:_set_state(STATES.ready)
 end
 
 ExperimentalPlayerHostedSessionBoot.result = function (self)
