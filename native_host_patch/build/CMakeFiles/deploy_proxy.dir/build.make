@@ -69,7 +69,6 @@ include CMakeFiles/deploy_proxy.dir/progress.make
 CMakeFiles/deploy_proxy:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir="/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/CMakeFiles" --progress-num=$(CMAKE_PROGRESS_1) "Copying native patch DLLs into Darktide binaries"
 	/usr/bin/cmake -E copy_if_different "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/SoloPlayNativeHostPatch.dll" "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/../../../binaries/SoloPlayNativeHostPatch.dll"
-	/usr/bin/cmake -E copy_if_different "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/XINPUT9_1_0.dll" "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/../../../binaries/XINPUT9_1_0.dll"
 	/usr/bin/cmake -E copy_if_different "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/build/dxva2.dll" "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/../../../binaries/dxva2.dll"
 
 CMakeFiles/deploy_proxy.dir/codegen:

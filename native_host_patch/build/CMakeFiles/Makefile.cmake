@@ -32,7 +32,6 @@ set(CMAKE_MAKEFILE_PRODUCTS
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/SoloPlayNativeHostPatch.dir/DependInfo.cmake"
-  "CMakeFiles/XINPUT9_1_0.dir/DependInfo.cmake"
   "CMakeFiles/dxva2.dir/DependInfo.cmake"
   "CMakeFiles/deploy_proxy.dir/DependInfo.cmake"
   )

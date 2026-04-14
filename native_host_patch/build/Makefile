@@ -130,19 +130,6 @@ SoloPlayNativeHostPatch/fast:
 .PHONY : SoloPlayNativeHostPatch/fast
 
 #=============================================================================
-# Target rules for targets named XINPUT9_1_0
-
-# Build rule for target.
-XINPUT9_1_0: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 XINPUT9_1_0
-.PHONY : XINPUT9_1_0
-
-# fast build rule for target.
-XINPUT9_1_0/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/XINPUT9_1_0.dir/build.make CMakeFiles/XINPUT9_1_0.dir/build
-.PHONY : XINPUT9_1_0/fast
-
-#=============================================================================
 # Target rules for targets named dxva2
 
 # Build rule for target.
@@ -177,7 +164,6 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... SoloPlayNativeHostPatch"
-	@echo "... XINPUT9_1_0"
 	@echo "... deploy_proxy"
 	@echo "... dxva2"
 .PHONY : help

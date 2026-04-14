@@ -36,32 +36,14 @@ cmake --build build
 
 Expected output:
 - `build/SoloPlayNativeHostPatch.dll`
-- `build/XINPUT9_1_0.dll`
 - `build/dxva2.dll`
 
-Planned injection path:
-- Darktide imports `XINPUT9_1_0.dll` and only requests `XInputGetState` + `XInputSetState`
-- the game does not ship a local `XINPUT9_1_0.dll`
-- this makes an xinput proxy DLL a practical no-injector native entry point
-- proxy strategy:
-  1. place `XINPUT9_1_0.dll` next to `Darktide.exe`
-  2. proxy loads the real system xinput DLL from System32
-  3. proxy forwards the xinput exports and runs our patch initialization in-process
-  4. proxy attempts to load `SoloPlayNativeHostPatch.dll` from the same directory
-
-Current diagnostics:
-- the xinput proxy writes `SoloPlayNativeHostPatch.log` next to itself
-- expected early log lines include:
-  - `xinput proxy initialized`
-  - `system xinput exports resolved`
-  - `companion patch loaded`
-
-Alternate proxy path:
+Current native entry path:
 - Darktide also imports `dxva2.dll`
 - the main EXE only imports two dxva2 functions:
   - `GetNumberOfPhysicalMonitorsFromHMONITOR`
   - `GetPhysicalMonitorsFromHMONITOR`
-- this makes a `dxva2.dll` proxy a cleaner fallback native entry point if `XINPUT9_1_0.dll` override destabilizes startup
+- this makes a `dxva2.dll` proxy the current native entry point
 - current runtime-validation behavior:
   - the `dxva2` proxy now schedules a delayed companion load automatically
   - current delay is `20s`
