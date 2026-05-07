@@ -8,9 +8,11 @@ set(CMAKE_DEPENDS_GENERATOR "Unix Makefiles")
 set(CMAKE_MAKEFILE_DEPENDS
   "CMakeCache.txt"
   "/home/bocor/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods/SoloPlay/native_host_patch/CMakeLists.txt"
-  "CMakeFiles/4.3.1/CMakeSystem.cmake"
+  "CMakeFiles/4.3.2/CMakeSystem.cmake"
+  "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake"
   "/usr/share/cmake/Modules/CMakeGenericSystem.cmake"
   "/usr/share/cmake/Modules/CMakeInitializeConfigs.cmake"
+  "/usr/share/cmake/Modules/CMakeSystem.cmake.in"
   "/usr/share/cmake/Modules/CMakeSystemSpecificInformation.cmake"
   "/usr/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake"
   "/usr/share/cmake/Modules/Platform/Linux-Initialize.cmake"
@@ -26,6 +28,7 @@ set(CMAKE_MAKEFILE_OUTPUTS
 
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
+  "CMakeFiles/4.3.2/CMakeSystem.cmake"
   "CMakeFiles/CMakeDirectoryInformation.cmake"
   )
 

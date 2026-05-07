@@ -18,6 +18,126 @@ That flow already preserves:
 
 So the best non-LAN alternative to pure LAN discovery is likely to reuse this path and replace only the final “target dedicated session” with a player-hosted target.
 
+## Current party-broadcast follow path in SoloPlay
+
+SoloPlay now uses the stock `PartyImmateriumManager.broadcast(...)` path as a lightweight strike-team follow signal:
+
+- host broadcasts a SoloPlay-specific type carrying mission/lobby context
+- receiving clients hook `PartyImmateriumManager._handle_party_event(...)`
+- when they see that broadcast they:
+  - log `HOSTED_FOLLOW_RECEIVED ...`
+  - create a browser if needed
+  - trigger `browser:refresh()` automatically
+
+This does not complete the full follow path yet, but it does make the strike-team clients start the discovery side immediately when the host presses the hosted mission button.
+
+## Client-side follow path now enters lobby join
+
+The client follow helper in `SoloPlay.lua` now does more than browser refresh:
+
+1. receive hosted follow signal
+2. refresh browser
+3. wait for matching hosted lobby id to become visible
+4. `start_client_handshake(...)`
+5. wait for handshake status `done`
+6. `establish_connection_to_server(...)`
+7. `Network.join_lan_lobby(lobby_data.id)`
+
+It now also:
+
+8. polls `engine_lobby:state()`
+9. logs `joined` / `failed`
+10. if joined, logs `engine_lobby:lobby_host()`
+
+And after lobby join it now logs the next minimal session-layer checkpoint:
+
+11. `Managers.connection._connection_client`
+12. `Managers.multiplayer_session._session`
+13. `Managers.connection:host_channel()`
+
+It now also attempts the next stock-like step after lobby join:
+
+14. trigger `client_exit_gameplay` until no current game session remains
+15. construct a synthetic `ConnectionClient:new(...)`
+16. route it through `Managers.connection:set_connection_client(...)`
+17. set `Managers.multiplayer_session._session`
+18. call `boot_complete()` / `ready_to_join()` when appropriate
+19. create `LoadingClient` using stock loaders + host channel when available
+
+Current runtime checkpoints logged for this phase:
+
+- `HOSTED_FOLLOW_CONNECTION_CREATED client=... session=...`
+- `HOSTED_FOLLOW_CONNECTION_BOOT_COMPLETE`
+- `HOSTED_FOLLOW_CONNECTION_READY_TO_JOIN`
+- `HOSTED_FOLLOW_LOADING_CLIENT_CREATED host_channel=...`
+- final `HOSTED_FOLLOW_CONNECTION_CREATED host_channel=...`
+
+Additional short-lived monitor now logs after `ConnectionClient` creation:
+
+- `HOSTED_FOLLOW_CONNECTION_MONITOR_1/2/3`
+  - `channel_id`
+  - `has_reserved()`
+  - `host_is_dedicated_server()`
+  - `has_disconnected()`
+  - `party_id`
+  - `current_game_session_id`
+  - `game_session_in_progress`
+  - `loading_client_state`
+
+Current caveat:
+
+- this uses a synthetic JWT-like ticket because no real backend server-details ticket exists on the follow path yet
+- it is therefore a high-value but still experimental stock-bootstrap attempt, not a proven-good client path yet
+
+Synthetic ticket has now been tightened to a more stock-like minimum shape:
+
+- header:
+  - `alg = "none"`
+  - `typ = "JWT"`
+- payload:
+  - `instanceId = "dev--region-dev--soloplay--<sessionId>--local"`
+  - `sessionId = <engine_lobby_id as string>`
+  - `sessionSettings.missionJson = JSON string` containing:
+    - `map`
+    - `challenge`
+    - `resistance`
+    - `side_mission`
+    - `circumstance`
+    - `id`
+
+This should survive `ConnectionClient.init` and local mechanism verification better than the earlier rougher placeholder ticket.
+
+This is still not a full mission/session join, but it now follows the stock ordering closely enough to reach the actual lobby join step.
+
+Retry behavior now added:
+
+- if the expected hosted lobby is not visible on the first browser refresh
+- the client follow helper now retries browser refresh up to 3 times
+- each retry is logged as `HOSTED_FOLLOW_BROWSER_RETRY <n>`
+
+## Post-lobby client bootstrap clarified
+
+Stock source confirms:
+
+- `Network.join_lan_lobby(...)` is not enough by itself
+- both hub and mission boot paths wait for `engine_lobby:state() == "joined"` and then explicitly call `_create_connection()`
+- `_create_connection()` manually constructs `ConnectionClient:new(...)`
+
+Required inputs for that stock-like step include:
+
+- `event_delegate`
+- joined `engine_lobby`
+- cleanup callback
+- `Managers.connection.combined_hash`
+- correct `host_type`
+- valid `jwt_ticket`
+
+Practical implication:
+
+- the current follow path reaching `join_lan_lobby(...)` is a useful milestone
+- but it still needs a stock-like `ConnectionClient` creation step after lobby join to enter the real client/session/loading layer
+- the main missing input is a valid `jwt_ticket` / server-details equivalent on the follow side
+
 ## Core source path
 
 ### 1. Party manager tracks the active game session id
@@ -486,6 +606,29 @@ Therefore the right priority remains:
 1. keep stock package-sync seeding/enablement in place
 2. improve remote profile realism
 3. avoid package-specific ad-hoc hacks unless profile-based improvement proves insufficient
+
+## Current hub-session takeover blocker and fix
+
+Runtime evidence from the hosted-button path showed:
+
+- the button callback fired
+- `start_experimental_party_hosted_session(...)` was invoked
+- but the game remained in the existing `hub_server` session afterward
+
+Strongest interpretation:
+
+- installing `_session_boot` alone was not enough while a live hub multiplayer session was still active
+
+Current fix applied:
+
+- the hosted-button path now calls:
+  - `Managers.multiplayer_session:reset("Hosting SoloPlay party-hosted session")`
+  before installing the experimental player-hosted boot
+
+Goal:
+
+- force the stock multiplayer manager to stop treating the current hub session as authoritative
+- let the experimental player-hosted boot become the active session bootstrap
 
 Pass-through from the joining client and already close to stock:
 

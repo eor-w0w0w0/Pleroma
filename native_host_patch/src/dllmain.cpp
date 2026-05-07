@@ -40,7 +40,7 @@ static constexpr DWORD PAGE_EXECUTE_READWRITE = 0x40;
 static constexpr DWORD MEM_COMMIT = 0x1000;
 static constexpr DWORD MEM_RESERVE = 0x2000;
 static constexpr int VALIDATION_WORKER_MAX_ATTEMPTS = 900;
-static constexpr DWORD VALIDATION_WORKER_POLL_MS = 3000;
+static constexpr DWORD VALIDATION_WORKER_POLL_MS = 1000;
 static constexpr WORD IMAGE_DOS_SIGNATURE = 0x5A4D;
 static constexpr DWORD IMAGE_NT_SIGNATURE = 0x00004550;
 static constexpr int IMAGE_DIRECTORY_ENTRY_EXPORT = 0;
@@ -256,6 +256,9 @@ struct ValidationState {
     unsigned long long last_browser_arg4;
     unsigned long long last_browser_arg5;
     unsigned long long synthetic_lobby_id;
+    unsigned long long last_discovery_reply_source_id;
+    unsigned long long last_discovery_reply_lobby_id;
+    int discovery_reply_send_count;
     unsigned int browser_transport_ready_observations;
     int browser_post_registration_refresh_done;
     void *last_logged_lan_client;
@@ -283,13 +286,14 @@ static RuntimeState g_runtime = {};
 static ValidationState g_validation = {};
 
 // Keep browser/discovery validation disabled until its callback ABI is confirmed.
-static constexpr int kDefaultEnableBrowserValidation = 0;
+static constexpr int kDefaultEnableBrowserValidation = 1;
 // Keep synthetic discovery replies disabled until browser transport validation is stable.
 static constexpr int kDefaultEnableSyntheticDiscoverLobbyReply = 0;
 static constexpr int kDefaultEnableRegisterCaptureHook = 0;
 // Keep browser event 0x12 hook disabled until a safe detour/trampoline is added.
 static constexpr int kEnableBrowserEvent12Hook = 0;
 static constexpr int kEnableCreateLobbyBrowserCapture = 0;
+static constexpr int kEnableRequestConnectionParserHook = 0;
 
 struct SyntheticDiscoverReplyPlan {
     unsigned short envelope_tag;
@@ -316,6 +320,32 @@ struct SyntheticAdmissionRecordPlan {
 	unsigned short port;
 };
 
+struct SyntheticHostLanLobbyPlan {
+	unsigned long long lobby_id;
+	unsigned int max_members;
+	unsigned int state;
+	unsigned long long game_session_host;
+	int register_control_family;
+	int register_channel_family;
+	int register_join_family;
+};
+
+struct HostSequenceState {
+	unsigned long long last_discovery_source_id;
+	unsigned long long last_discovery_lobby_id;
+	unsigned long long last_request_connection_peer_id;
+	unsigned short last_request_connection_port;
+	unsigned long long last_admitted_peer_id;
+	unsigned long long last_join_accept_peer_id;
+};
+
+struct SyntheticJoinSequencePlan {
+	void *lan_lobby;
+	unsigned long long peer_id;
+	unsigned int ipv4_host_order;
+	unsigned short port_host_order;
+};
+
 struct InlineHookPatch {
     void *target;
     BYTE original[16];
@@ -328,7 +358,15 @@ struct BrowserCaptureHookState {
 	void *trampoline;
 };
 
+struct RequestConnectionHookState {
+	InlineHookPatch patch;
+	int installed;
+	void *trampoline;
+};
+
 static BrowserCaptureHookState g_browser_capture_hook = {};
+static RequestConnectionHookState g_request_connection_hook = {};
+static HostSequenceState g_host_sequence = {};
 
 static inline PEB *current_peb()
 {
@@ -396,6 +434,7 @@ static void *rva_to_ptr(HMODULE module, DWORD rva)
 }
 
 static void write_log_line(const char *message);
+static bool is_plausible_runtime_pointer(void *pointer);
 
 static void append_hex(char *dst, size_t &index, ULONG_PTR value)
 {
@@ -425,7 +464,7 @@ static void write_hex_line(const char *prefix, ULONG_PTR value)
 
 static void log_known_rva(const char *name, DWORD rva)
 {
-    if (!g_runtime.patch_target_module) {
+    if (!g_runtime.patch_target_module || rva == 0) {
         return;
     }
 
@@ -454,6 +493,12 @@ static void *read_global_pointer(DWORD rva)
     return slot ? *slot : nullptr;
 }
 
+static void *read_global_pointer_if_plausible(DWORD rva)
+{
+	void *value = read_global_pointer(rva);
+	return is_plausible_runtime_pointer(value) ? value : nullptr;
+}
+
 static unsigned long read_u32_field(void *base, unsigned long offset)
 {
     if (!base) {
@@ -462,6 +507,15 @@ static unsigned long read_u32_field(void *base, unsigned long offset)
 
     auto *field = reinterpret_cast<unsigned long *>(reinterpret_cast<BYTE *>(base) + offset);
     return *field;
+}
+
+static unsigned long read_u32_field_if_plausible(void *base, unsigned long offset)
+{
+	if (!is_plausible_runtime_pointer(base)) {
+		return 0;
+	}
+
+	return read_u32_field(base, offset);
 }
 
 static void *read_ptr_field(void *base, unsigned long offset)
@@ -474,10 +528,20 @@ static void *read_ptr_field(void *base, unsigned long offset)
     return *field;
 }
 
+static void *read_ptr_field_if_plausible(void *base, unsigned long offset)
+{
+	if (!is_plausible_runtime_pointer(base)) {
+		return nullptr;
+	}
+
+	void *value = read_ptr_field(base, offset);
+	return is_plausible_runtime_pointer(value) ? value : nullptr;
+}
+
 static void log_runtime_lan_state()
 {
-    void *network_owner = read_global_pointer(darktide::lan::kNetworkOwnerGlobalRva);
-    void *lan_client = read_global_pointer(darktide::lan::kLanClientGlobalRva);
+    void *network_owner = read_global_pointer_if_plausible(darktide::lan::kNetworkOwnerGlobalRva);
+    void *lan_client = read_global_pointer_if_plausible(darktide::lan::kLanClientGlobalRva);
 
     write_hex_line("network owner global = ", reinterpret_cast<ULONG_PTR>(network_owner));
     write_hex_line("lan client global = ", reinterpret_cast<ULONG_PTR>(lan_client));
@@ -486,12 +550,12 @@ static void log_runtime_lan_state()
         return;
     }
 
-    void *browser_transport = read_ptr_field(lan_client, darktide::lan::kLanClientBrowserTransportOffset);
-    void *transport = read_ptr_field(lan_client, darktide::lan::kLanClientTransportOffset);
-    unsigned long active_lobbies = read_u32_field(lan_client, darktide::lan::kLanClientActiveLobbiesCountOffset);
-    void *active_lobby_array = read_ptr_field(lan_client, darktide::lan::kLanClientActiveLobbiesArrayOffset);
-    unsigned long known_peers = read_u32_field(lan_client, darktide::lan::kLanClientKnownPeersCountOffset);
-    void *known_peer_array = read_ptr_field(lan_client, darktide::lan::kLanClientKnownPeersArrayOffset);
+    void *browser_transport = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientBrowserTransportOffset);
+    void *transport = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientTransportOffset);
+    unsigned long active_lobbies = read_u32_field_if_plausible(lan_client, darktide::lan::kLanClientActiveLobbiesCountOffset);
+    void *active_lobby_array = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientActiveLobbiesArrayOffset);
+    unsigned long known_peers = read_u32_field_if_plausible(lan_client, darktide::lan::kLanClientKnownPeersCountOffset);
+    void *known_peer_array = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientKnownPeersArrayOffset);
 
     write_hex_line("lan client browser transport = ", reinterpret_cast<ULONG_PTR>(browser_transport));
     write_hex_line("lan client transport = ", reinterpret_cast<ULONG_PTR>(transport));
@@ -507,6 +571,11 @@ static bool copy_bytes(BYTE *dst, const BYTE *src, unsigned int count);
 static bool send_synthetic_discover_reply_explicit(void *browser_transport, const darktide::connectionless::SockAddrIn6Like *destination, const SyntheticDiscoverReplyPlan &plan);
 static void load_runtime_feature_flags();
 static void unregister_validation_browser_callback();
+static void *resolve_vfunc_if_plausible(void *object, unsigned long offset);
+static bool perform_synthetic_member_admission(void *lan_lobby, unsigned long long peer_id, unsigned int ipv4_host_order, unsigned short port_host_order);
+static bool resolve_transport_peer_address(void *transport, unsigned long long source_id, darktide::connectionless::SockAddrIn6Like *out_address);
+static void log_lan_lobby_state(void *lan_lobby, const char *label);
+static void log_host_sequence_state(const char *label);
 
 static SyntheticDiscoverReplyPlan make_synthetic_discover_reply_plan(unsigned long long descriptor_key)
 {
@@ -569,6 +638,18 @@ static void build_ipv4_mapped_sockaddr(darktide::connectionless::SockAddrIn6Like
 	out_address->address[15] = static_cast<BYTE>(ipv4_host_order & 0xFF);
 }
 
+static unsigned int extract_ipv4_host_order(const darktide::connectionless::SockAddrIn6Like *address)
+{
+	if (!address) {
+		return 0;
+	}
+
+	return (static_cast<unsigned int>(address->address[12]) << 24)
+		| (static_cast<unsigned int>(address->address[13]) << 16)
+		| (static_cast<unsigned int>(address->address[14]) << 8)
+		| static_cast<unsigned int>(address->address[15]);
+}
+
 static bool upsert_synthetic_peer_address(void *address_table_owner, unsigned long long peer_id, const darktide::connectionless::SockAddrIn6Like *address)
 {
 	if (!address_table_owner || !address) {
@@ -584,6 +665,259 @@ static bool upsert_synthetic_peer_address(void *address_table_owner, unsigned lo
 	}
 
 	upsert(address_table_owner, peer_id, address);
+	g_host_sequence.last_request_connection_peer_id = peer_id;
+	g_host_sequence.last_request_connection_port = address->port_be;
+	return true;
+}
+
+static BYTE *find_member_record(void *lan_lobby, unsigned long long peer_id)
+{
+	unsigned long count = read_u32_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyMembersCountOffset);
+	void *members = read_ptr_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyMembersArrayOffset);
+
+	if (!is_plausible_runtime_pointer(members) || count == 0 || count > 0x1000) {
+		return nullptr;
+	}
+
+	for (unsigned long i = 0; i < count; ++i) {
+		BYTE *record = reinterpret_cast<BYTE *>(members) + (i * darktide::lan::kLanMemberRecordSize);
+		unsigned long long candidate = *reinterpret_cast<unsigned long long *>(record + darktide::lan::kLanMemberIdOffset);
+		if (candidate == peer_id) {
+			return record;
+		}
+	}
+
+	return nullptr;
+}
+
+static bool send_synthetic_join_accept(void *lan_lobby, unsigned long long peer_id, unsigned int ipv4_host_order)
+{
+	if (!lan_lobby) {
+		return false;
+	}
+
+	BYTE *member = find_member_record(lan_lobby, peer_id);
+	if (!member) {
+		write_log_line("synthetic join accept missing member record");
+		return false;
+	}
+
+	unsigned int target_handle = *reinterpret_cast<unsigned int *>(member + darktide::lan::kLanMemberSendTargetHandleOffset);
+	if (target_handle == 0) {
+		write_log_line("synthetic join accept missing target handle");
+		write_log_line("HOST_JOIN_ACCEPT_FAILED_TARGET");
+		return false;
+	}
+
+	BYTE packet[0x20] = {};
+	auto build_packet = reinterpret_cast<darktide::packet::BuildJoinReplyFromIPv4Fn>(rva_to_ptr(g_runtime.patch_target_module, darktide::packet::kBuildJoinReplyFromIPv4Rva));
+	auto send_inner = reinterpret_cast<darktide::transport::SendInnerPayloadFn>(resolve_vfunc_if_plausible(read_ptr_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyTransportOffset), darktide::transport::kSendPayloadVfuncOffset));
+
+	if (!build_packet || !send_inner) {
+		write_log_line("synthetic join accept missing builder or send vfunc");
+		write_log_line("HOST_JOIN_ACCEPT_FAILED_HELPER");
+		return false;
+	}
+
+	build_packet(packet, ipv4_host_order, target_handle & 0xFFFFu);
+	int result = send_inner(read_ptr_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyTransportOffset), target_handle, 1, 1, packet, 0x1C * 8, 0);
+	write_hex_line("synthetic join accept target_handle = ", target_handle);
+	write_hex_line("synthetic join accept send result = ", result);
+	write_log_line(result != 0 ? "HOST_JOIN_ACCEPT_SENT" : "HOST_JOIN_ACCEPT_FAILED_SEND");
+	log_lan_lobby_state(lan_lobby, result != 0 ? "HOST_JOIN_ACCEPT_STATE" : "HOST_JOIN_ACCEPT_FAILED_STATE");
+	g_host_sequence.last_join_accept_peer_id = peer_id;
+	log_host_sequence_state(result != 0 ? "HOST_SEQUENCE_STATE_AFTER_JOIN_ACCEPT" : "HOST_SEQUENCE_STATE_AFTER_JOIN_ACCEPT_FAIL");
+	return result != 0;
+}
+
+static void log_lan_lobby_state(void *lan_lobby, const char *label)
+{
+	if (!lan_lobby) {
+		write_log_line("lan lobby state log missing lobby");
+		return;
+	}
+
+	write_log_line(label);
+	write_hex_line("lan lobby state lobby_id = ", *reinterpret_cast<unsigned long long *>(reinterpret_cast<BYTE *>(lan_lobby) + darktide::lan::kLanLobbyLobbyIdOffset));
+	write_hex_line("lan lobby state game_session_host = ", *reinterpret_cast<unsigned long long *>(reinterpret_cast<BYTE *>(lan_lobby) + darktide::lan::kLanLobbyGameSessionHostOffset));
+	write_hex_line("lan lobby state members_count = ", read_u32_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyMembersCountOffset));
+	write_hex_line("lan lobby state dirty_members = ", reinterpret_cast<BYTE *>(lan_lobby)[darktide::lan::kLanLobbyDirtyMemberDataFlagOffset]);
+	write_hex_line("lan lobby state dirty_lobby = ", reinterpret_cast<BYTE *>(lan_lobby)[darktide::lan::kLanLobbyDirtyLobbyDataFlagOffset]);
+	write_hex_line("lan lobby state fresh_member_data = ", reinterpret_cast<BYTE *>(lan_lobby)[darktide::lan::kLanLobbyHasFreshMemberDataFlagOffset]);
+}
+
+static void log_host_sequence_state(const char *label)
+{
+	write_log_line(label);
+	write_hex_line("host sequence discovery_source_id = ", g_host_sequence.last_discovery_source_id);
+	write_hex_line("host sequence discovery_lobby_id = ", g_host_sequence.last_discovery_lobby_id);
+	write_hex_line("host sequence request_peer_id = ", g_host_sequence.last_request_connection_peer_id);
+	write_hex_line("host sequence request_port = ", g_host_sequence.last_request_connection_port);
+	write_hex_line("host sequence admitted_peer_id = ", g_host_sequence.last_admitted_peer_id);
+	write_hex_line("host sequence join_accept_peer_id = ", g_host_sequence.last_join_accept_peer_id);
+}
+
+static void *find_active_lan_lobby_by_id(void *lan_client, unsigned long long lobby_id)
+{
+	if (!lan_client || lobby_id == 0) {
+		return nullptr;
+	}
+
+	unsigned long count = read_u32_field_if_plausible(lan_client, darktide::lan::kLanClientActiveLobbiesCountOffset);
+	void *array = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientActiveLobbiesArrayOffset);
+
+	if (!is_plausible_runtime_pointer(array) || count == 0 || count > 0x1000) {
+		return nullptr;
+	}
+
+	for (unsigned long i = 0; i < count; ++i) {
+		void *candidate = reinterpret_cast<void **>(array)[i];
+		if (!is_plausible_runtime_pointer(candidate)) {
+			continue;
+		}
+
+		unsigned long long candidate_lobby_id = *reinterpret_cast<unsigned long long *>(reinterpret_cast<BYTE *>(candidate) + darktide::lan::kLanLobbyLobbyIdOffset);
+		if (candidate_lobby_id == lobby_id) {
+			return candidate;
+		}
+	}
+
+	return nullptr;
+}
+
+static bool run_synthetic_join_sequence(const SyntheticJoinSequencePlan &plan)
+{
+	if (!plan.lan_lobby || plan.peer_id == 0 || plan.port_host_order == 0) {
+		write_log_line("synthetic join sequence missing required inputs");
+		return false;
+	}
+
+	write_log_line("synthetic join sequence starting");
+	write_hex_line("synthetic join sequence peer_id = ", plan.peer_id);
+	write_hex_line("synthetic join sequence port = ", plan.port_host_order);
+
+	if (!perform_synthetic_member_admission(plan.lan_lobby, plan.peer_id, plan.ipv4_host_order, plan.port_host_order)) {
+		write_log_line("synthetic join sequence admission failed");
+		return false;
+	}
+
+	if (!send_synthetic_join_accept(plan.lan_lobby, plan.peer_id, plan.ipv4_host_order)) {
+		write_log_line("synthetic join sequence join-accept failed");
+		return false;
+	}
+
+	write_log_line("synthetic join sequence completed");
+	return true;
+}
+
+static bool run_synthetic_join_sequence_from_lobby_and_peer(void *lan_client, void *transport, unsigned long long lobby_id, unsigned long long peer_id)
+{
+	if (!lan_client || !transport || lobby_id == 0 || peer_id == 0) {
+		return false;
+	}
+
+	void *lan_lobby = find_active_lan_lobby_by_id(lan_client, lobby_id);
+	if (!lan_lobby) {
+		write_log_line("synthetic join sequence could not find active lobby by id");
+		write_hex_line("synthetic join sequence missing lobby id = ", lobby_id);
+		return false;
+	}
+
+	darktide::connectionless::SockAddrIn6Like address = {};
+	if (!resolve_transport_peer_address(transport, peer_id, &address)) {
+		write_log_line("synthetic join sequence could not resolve peer address");
+		write_hex_line("synthetic join sequence missing peer id = ", peer_id);
+		return false;
+	}
+
+	SyntheticJoinSequencePlan plan = {};
+	plan.lan_lobby = lan_lobby;
+	plan.peer_id = peer_id;
+	plan.ipv4_host_order = extract_ipv4_host_order(&address);
+	plan.port_host_order = static_cast<unsigned short>(((address.port_be & 0x00FF) << 8) | ((address.port_be & 0xFF00) >> 8));
+
+	return run_synthetic_join_sequence(plan);
+}
+
+static bool validate_synthetic_join_prerequisites(void *lan_client, void *transport, unsigned long long lobby_id, unsigned long long peer_id)
+{
+	if (!is_plausible_runtime_pointer(lan_client)) {
+		write_log_line("synthetic join prerequisites missing lan_client");
+		return false;
+	}
+
+	if (!is_plausible_runtime_pointer(transport)) {
+		write_log_line("synthetic join prerequisites missing transport");
+		return false;
+	}
+
+	if (lobby_id == 0) {
+		write_log_line("synthetic join prerequisites missing lobby_id");
+		return false;
+	}
+
+	if (peer_id == 0) {
+		write_log_line("synthetic join prerequisites missing peer_id");
+		return false;
+	}
+
+	if (!find_active_lan_lobby_by_id(lan_client, lobby_id)) {
+		write_log_line("synthetic join prerequisites missing active_lobby");
+		return false;
+	}
+
+	darktide::connectionless::SockAddrIn6Like address = {};
+	if (!resolve_transport_peer_address(transport, peer_id, &address)) {
+		write_log_line("synthetic join prerequisites missing peer_address");
+		return false;
+	}
+
+	return true;
+}
+
+using LanLobbyAdmissionFn = void (*)(void *lan_lobby, void *temp_record, unsigned int port);
+
+static bool perform_synthetic_member_admission(void *lan_lobby, unsigned long long peer_id, unsigned int ipv4_host_order, unsigned short port_host_order)
+{
+	if (!lan_lobby) {
+		return false;
+	}
+
+	void *address_table_owner = read_ptr_field_if_plausible(lan_lobby, darktide::lan::kLanLobbyHostOrPeerMapOffset);
+	if (!address_table_owner) {
+		write_log_line("synthetic admission missing address-table owner");
+		return false;
+	}
+
+	darktide::connectionless::SockAddrIn6Like address = {};
+	build_ipv4_mapped_sockaddr(&address, ipv4_host_order, port_host_order);
+
+	if (!upsert_synthetic_peer_address(address_table_owner, peer_id, &address)) {
+		write_log_line("synthetic admission peer-address upsert failed");
+		write_log_line("HOST_ADMISSION_FAILED_UPSERT");
+		return false;
+	}
+
+	BYTE temp_record[darktide::lan::kLanAdmissionRecordSize] = {};
+	*reinterpret_cast<unsigned long long *>(temp_record + darktide::lan::kLanAdmissionPeerIdOffset) = peer_id;
+	*reinterpret_cast<void **>(temp_record + darktide::lan::kLanAdmissionBufferOwnerAOffset) = reinterpret_cast<BYTE *>(lan_lobby) + 8;
+	*reinterpret_cast<void **>(temp_record + darktide::lan::kLanAdmissionBufferOwnerBOffset) = reinterpret_cast<BYTE *>(lan_lobby) + 8;
+
+	auto admission = reinterpret_cast<LanLobbyAdmissionFn>(rva_to_ptr(g_runtime.patch_target_module, darktide::lan::kLanLobbyAdmissionHelperRva));
+	if (!admission) {
+		write_log_line("synthetic admission helper missing");
+		write_log_line("HOST_ADMISSION_FAILED_HELPER");
+		return false;
+	}
+
+	admission(lan_lobby, temp_record, port_host_order);
+	write_log_line("synthetic admission helper called");
+	write_log_line("HOST_ADMISSION_PERFORMED");
+	write_hex_line("synthetic admission peer_id = ", peer_id);
+	write_hex_line("synthetic admission port = ", port_host_order);
+	log_lan_lobby_state(lan_lobby, "HOST_ADMISSION_STATE");
+	g_host_sequence.last_admitted_peer_id = peer_id;
+	log_host_sequence_state("HOST_SEQUENCE_STATE_AFTER_ADMISSION");
 	return true;
 }
 
@@ -622,9 +956,9 @@ static unsigned long long compute_synthetic_lobby_id()
         return g_validation.synthetic_lobby_id;
     }
 
-	void *connection_manager = read_global_pointer(0x012A4250);
+	void *connection_manager = read_global_pointer_if_plausible(0x012A4250);
 	if (is_plausible_runtime_pointer(connection_manager)) {
-		void *engine_lobby = read_ptr_field(connection_manager, 0x20);
+		void *engine_lobby = read_ptr_field_if_plausible(connection_manager, 0x20);
 		if (is_plausible_runtime_pointer(engine_lobby)) {
 			unsigned long long maybe_lobby_id = *reinterpret_cast<unsigned long long *>(engine_lobby);
 			if (maybe_lobby_id != 0) {
@@ -649,8 +983,8 @@ static bool resolve_transport_peer_address(void *transport, unsigned long long s
 	return false;
 }
 
-    unsigned long count = read_u32_field(transport, darktide::transport::kPeerAddressCountOffset);
-    void *entries = read_ptr_field(transport, darktide::transport::kPeerAddressEntriesOffset);
+    unsigned long count = read_u32_field_if_plausible(transport, darktide::transport::kPeerAddressCountOffset);
+    void *entries = read_ptr_field_if_plausible(transport, darktide::transport::kPeerAddressEntriesOffset);
 
     if (!is_plausible_runtime_pointer(entries) || count == 0 || count > 0x1000) {
         return false;
@@ -673,9 +1007,9 @@ static bool resolve_transport_peer_address(void *transport, unsigned long long s
 
 static void *resolve_browser_transport_from_owner_chain()
 {
-	void *owner_root = read_global_pointer(darktide::wanclient::kWanClientOwnerGlobalRva);
-	void *owner_nested = read_ptr_field(owner_root, darktide::wanclient::kWanClientOwnerNestedOffset);
-	void *browser_transport = read_ptr_field(owner_nested, darktide::wanclient::kWanClientOwnerBrowserTransportOffset);
+	void *owner_root = read_global_pointer_if_plausible(darktide::wanclient::kWanClientOwnerGlobalRva);
+	void *owner_nested = read_ptr_field_if_plausible(owner_root, darktide::wanclient::kWanClientOwnerNestedOffset);
+	void *browser_transport = read_ptr_field_if_plausible(owner_nested, darktide::wanclient::kWanClientOwnerBrowserTransportOffset);
 
 	if (is_plausible_runtime_pointer(browser_transport)) {
 		write_hex_line("validation browser transport owner_root = ", reinterpret_cast<ULONG_PTR>(owner_root));
@@ -689,7 +1023,7 @@ static void *resolve_browser_transport_from_owner_chain()
 
 static void *resolve_browser_transport_from_lan_client(void *lan_client)
 {
-	void *browser_transport = read_ptr_field(lan_client, darktide::lan::kLanClientBrowserTransportOffset);
+	void *browser_transport = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientBrowserTransportOffset);
 
 	if (is_plausible_runtime_pointer(browser_transport)) {
 		write_hex_line("validation browser transport lan_client_path = ", reinterpret_cast<ULONG_PTR>(browser_transport));
@@ -789,6 +1123,34 @@ static unsigned int build_synthetic_discover_reply_packet(const SyntheticDiscove
     }
 
     return used;
+}
+
+static unsigned int build_synthetic_join_accept_packet(const SyntheticJoinAcceptPlan &plan, BYTE *buffer, unsigned int buffer_size)
+{
+	if (!g_runtime.write_bits32 || !buffer || buffer_size < 8) {
+		return 0;
+	}
+
+	for (unsigned int i = 0; i < buffer_size; ++i) {
+		buffer[i] = 0;
+	}
+
+	darktide::packet::BitCursor cursor = {};
+	initialize_bit_cursor(&cursor, buffer, buffer_size);
+
+	// Inner lobby packet opcode in 6 bits, followed by 1-bit accepted flag.
+	g_runtime.write_bits32(&cursor, darktide::lan::LanPacket_LobbyRequestJoinReply, 6);
+	g_runtime.write_bits32(&cursor, plan.accepted ? 1 : 0, 1);
+
+	const ULONG_PTR start = reinterpret_cast<ULONG_PTR>(cursor.buffer_start);
+	const ULONG_PTR current = reinterpret_cast<ULONG_PTR>(cursor.cursor);
+	unsigned int used = static_cast<unsigned int>(current - start);
+
+	if (cursor.bit_state != 0) {
+		used += 1;
+	}
+
+	return used;
 }
 
 static void log_byte_line(const char *prefix, const BYTE *data, unsigned int count)
@@ -955,8 +1317,8 @@ static void record_captured_browser_object(void *browser_object)
 	}
 
 	g_validation.captured_browser_object = browser_object;
-	g_validation.captured_browser_owner = read_ptr_field(browser_object, darktide::lan::kLanLobbyBrowserEntryHashOwnerOffset);
-	g_validation.captured_browser_transport = read_ptr_field(browser_object, darktide::lan::kLanLobbyBrowserTransportOffset);
+	g_validation.captured_browser_owner = read_ptr_field_if_plausible(browser_object, darktide::lan::kLanLobbyBrowserEntryHashOwnerOffset);
+	g_validation.captured_browser_transport = read_ptr_field_if_plausible(browser_object, darktide::lan::kLanLobbyBrowserTransportOffset);
 
 	write_hex_line("captured browser object = ", reinterpret_cast<ULONG_PTR>(g_validation.captured_browser_object));
 	write_hex_line("captured browser owner = ", reinterpret_cast<ULONG_PTR>(g_validation.captured_browser_owner));
@@ -1050,6 +1412,23 @@ static void maybe_install_registration_capture_hook()
 	write_hex_line("registration capture trampoline = ", reinterpret_cast<ULONG_PTR>(trampoline));
 }
 
+static void maybe_install_request_connection_hook()
+{
+	if (kEnableRequestConnectionParserHook) {
+		write_log_line("request_connection parser hook requested but currently disabled");
+		write_hex_line("request_connection parser start = ", reinterpret_cast<ULONG_PTR>(rva_to_ptr(g_runtime.patch_target_module, darktide::connectionless::kRequestConnectionReceiveParserStartRva)));
+		write_hex_line("request_connection parser end = ", reinterpret_cast<ULONG_PTR>(rva_to_ptr(g_runtime.patch_target_module, darktide::connectionless::kRequestConnectionReceiveParserEndRva)));
+	}
+}
+
+static void log_request_connection_hook_plan(unsigned long long peer_id, unsigned short port, unsigned long long lobby_id)
+{
+	write_log_line("request_connection hook candidate reached");
+	write_hex_line("request_connection candidate peer_id = ", peer_id);
+	write_hex_line("request_connection candidate port = ", port);
+	write_hex_line("request_connection candidate lobby_id = ", lobby_id);
+}
+
 static int validation_control_callback(void *context, void *arg2, unsigned long long arg3, void *arg4, unsigned long long arg5, void *arg6)
 {
     auto *state = reinterpret_cast<ValidationState *>(context);
@@ -1117,8 +1496,17 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
             write_log_line("synthetic browser reply sent from event 0x11");
             write_hex_line("synthetic discover source id = ", source_id);
             write_hex_line("synthetic discover lobby id = ", plan.descriptor_key);
+			write_log_line("HOST_DISCOVERY_REPLY_SENT");
+			state->last_discovery_reply_source_id = source_id;
+			state->last_discovery_reply_lobby_id = plan.descriptor_key;
+			g_host_sequence.last_discovery_source_id = source_id;
+			g_host_sequence.last_discovery_lobby_id = plan.descriptor_key;
+			state->discovery_reply_send_count += 1;
+			write_hex_line("synthetic discover send count = ", state->discovery_reply_send_count);
+			log_host_sequence_state("HOST_SEQUENCE_STATE_AFTER_DISCOVERY");
         } else {
             write_log_line("synthetic browser reply send failed from event 0x11");
+			write_log_line("HOST_DISCOVERY_REPLY_FAILED");
         }
     }
 
@@ -1127,7 +1515,7 @@ static int validation_browser_callback(void *context, void *arg2, unsigned long 
 
 static int try_register_validation_callbacks()
 {
-    void *lan_client = read_global_pointer(darktide::lan::kLanClientGlobalRva);
+    void *lan_client = read_global_pointer_if_plausible(darktide::lan::kLanClientGlobalRva);
     void *browser_transport = nullptr;
 
     if (g_validation.browser_callback_feature_enabled && g_validation.registration_capture_feature_enabled) {
@@ -1135,7 +1523,7 @@ static int try_register_validation_callbacks()
     } else {
         browser_transport = resolve_browser_transport(lan_client);
     }
-    void *control_transport = read_ptr_field(lan_client, darktide::lan::kLanClientTransportOffset);
+    void *control_transport = read_ptr_field_if_plausible(lan_client, darktide::lan::kLanClientTransportOffset);
 
     g_validation.lan_client = lan_client;
     g_validation.browser_transport = browser_transport;
@@ -1363,6 +1751,7 @@ static DWORD validation_worker_thread(LPVOID)
 
     for (int attempt = 0; attempt < VALIDATION_WORKER_MAX_ATTEMPTS; ++attempt) {
 		load_runtime_feature_flags();
+		maybe_install_registration_capture_hook();
 
         int result = try_register_validation_callbacks();
 
@@ -1845,6 +2234,7 @@ extern "C" DLL_EXPORT int SoloPlayHostPatch_Initialize()
     patch::log_runtime_lan_state();
     patch::maybe_install_create_lobby_browser_capture_hook();
     patch::maybe_install_registration_capture_hook();
+    patch::maybe_install_request_connection_hook();
     patch::start_validation_worker();
 
     patch::log_string_probe("join_lan_lobby");

@@ -1,6 +1,6 @@
 #pragma once
 
-// Darktide retail build 1.11.0-b704841 native LAN/lobby symbols.
+// Darktide retail build post-Apr-2026 update native LAN/lobby symbols.
 //
 // These values are reverse-engineered RVAs from Darktide.exe and are intended
 // as a code-side reference for future native host/bootstrap work.
@@ -8,19 +8,19 @@
 namespace darktide::lan {
 
 // Lua-exposed wrappers.
-static constexpr unsigned long kJoinLanLobbyWrapperRva = 0x0048A1F0;
-static constexpr unsigned long kLeaveLanLobbyWrapperRva = 0x0048A520;
-static constexpr unsigned long kCreateLobbyBrowserWrapperRva = 0x0048AEC0;
-static constexpr unsigned long kDestroyLobbyBrowserWrapperRva = 0x0048B070;
-static constexpr unsigned long kLanLobbyStateWrapperRva = 0x0048A600;
+static constexpr unsigned long kJoinLanLobbyWrapperRva = 0x0048A250;
+static constexpr unsigned long kLeaveLanLobbyWrapperRva = 0x0048A580;
+static constexpr unsigned long kCreateLobbyBrowserWrapperRva = 0x0048AF20;
+static constexpr unsigned long kDestroyLobbyBrowserWrapperRva = 0x0048B0D0;
+static constexpr unsigned long kLanLobbyStateWrapperRva = 0x0048A660;
 
 // Global owners/singletons inferred from wrapper setup.
-static constexpr unsigned long kNetworkOwnerGlobalRva = 0x012A4258;
-static constexpr unsigned long kLanClientGlobalRva = 0x012A43E0;
+static constexpr unsigned long kNetworkOwnerGlobalRva = 0x012A3258;
+static constexpr unsigned long kLanClientGlobalRva = 0x012A33E0;
 
 // Live LanLobby object.
-static constexpr unsigned long kLanLobbyVtableRva = 0x00F44500;
-static constexpr unsigned long kLanLobbyBaseVtableRva = 0x00F23F68;
+static constexpr unsigned long kLanLobbyVtableRva = 0x00F41BC0;
+static constexpr unsigned long kLanLobbyBaseVtableRva = 0x00F1C358;
 static constexpr unsigned long kLanLobbySize = 0x650;
 
 // LanLobby field offsets.
@@ -47,32 +47,33 @@ static constexpr unsigned long kLanLobbyDirtyLobbyDataFlagOffset = 0x649;
 static constexpr unsigned long kLanLobbyHasFreshMemberDataFlagOffset = 0x64A;
 
 // Native helper cluster.
-static constexpr unsigned long kLanLobbyJoinBootstrapHelperRva = 0x0056C6E0;
-static constexpr unsigned long kLanLobbyMembersSendHelperRva = 0x0056CA10;
-static constexpr unsigned long kLanLobbyDataSendHelperRva = 0x0056CE00;
-static constexpr unsigned long kLanLobbyDataBuildHelperRva = 0x0056CE60;
-static constexpr unsigned long kLanLobbyMemberDataSendHelperRva = 0x0056D1B0;
-static constexpr unsigned long kLanLobbyMemberDataBuildHelperRva = 0x0056D200;
-static constexpr unsigned long kLanLobbyUpdateRva = 0x0056D7B0;
-static constexpr unsigned long kLanLobbyRefreshHostMemberHelperRva = 0x0056E0D0;
-static constexpr unsigned long kLanLobbyOuterConnectCallbackRva = 0x0056E4F0;
-static constexpr unsigned long kLanLobbyCreateChannelCallbackRva = 0x0056EE70;
-static constexpr unsigned long kLanLobbyRemoveMemberHelperRva = 0x0056E430;
+static constexpr unsigned long kLanLobbyJoinBootstrapHelperRva = 0x0056C740;
+static constexpr unsigned long kLanLobbyMembersSendHelperRva = 0x0056CA70;
+static constexpr unsigned long kLanLobbyDataSendHelperRva = 0x00569BE0;
+static constexpr unsigned long kLanLobbyDataBuildHelperRva = 0x0056AB00;
+static constexpr unsigned long kLanLobbyMemberDataSendHelperRva = 0x0056A9E0;
+static constexpr unsigned long kLanLobbyMemberDataBuildHelperRva = 0x0056A620;
+static constexpr unsigned long kLanLobbyUpdateRva = 0x0056A1E0;
+static constexpr unsigned long kLanLobbyRefreshHostMemberHelperRva = 0x0056E070;
+static constexpr unsigned long kLanLobbyAdmissionHelperRva = 0x0056E140;
+static constexpr unsigned long kLanLobbyOuterConnectCallbackRva = 0x0056E550;
+static constexpr unsigned long kLanLobbyCreateChannelCallbackRva = 0x0056EED0;
+static constexpr unsigned long kLanLobbyRemoveMemberHelperRva = 0x0056E490;
 static constexpr unsigned long kLanLobbyChannelDispatchRva = 0x0056E6E0;
 static constexpr unsigned long kLanLobbyJoinReplyHandlerRva = 0x0056EBC6;
 static constexpr unsigned long kLanConnectionlessSendConnectRequestRva = 0x0056EFF0;
 static constexpr unsigned long kLanConnectionlessSendDiscoveryRva = 0x0056F2E0;
-static constexpr unsigned long kLanConnectionlessParserRva = 0x0056F5D0;
-static constexpr unsigned long kLanConnectionlessParserThunkRva = 0x0056F5B0;
-static constexpr unsigned long kLanLobbyChannelEnvelopeThunkRva = 0x0056F9C0;
+static constexpr unsigned long kLanConnectionlessParserRva = 0x0056F630;
+static constexpr unsigned long kLanConnectionlessParserThunkRva = 0x0056F610;
+static constexpr unsigned long kLanLobbyChannelEnvelopeThunkRva = 0x0056FA20;
 static constexpr unsigned long kLanJoinReplyBuildHelperRva = 0x006C56F0;
 
 // State names table.
-static constexpr unsigned long kLanLobbyStateNamesTableRva = 0x00F444D8;
-static constexpr unsigned long kLanLobbyStateCreatingNameRva = 0x00F43EE8;
-static constexpr unsigned long kLanLobbyStateJoiningNameRva = 0x00F43E88;
-static constexpr unsigned long kLanLobbyStateJoinedNameRva = 0x00F43E90;
-static constexpr unsigned long kLanLobbyStateFailedNameRva = 0x00F3CF48;
+static constexpr unsigned long kLanLobbyStateNamesTableRva = 0x00F41B98;
+static constexpr unsigned long kLanLobbyStateCreatingNameRva = 0x00F41568;
+static constexpr unsigned long kLanLobbyStateJoiningNameRva = 0x00F41578;
+static constexpr unsigned long kLanLobbyStateJoinedNameRva = 0x00F41580;
+static constexpr unsigned long kLanLobbyStateFailedNameRva = 0x00F3C3EC;
 
 enum LanLobbyState {
     LanLobbyState_Creating = 0,
@@ -80,6 +81,11 @@ enum LanLobbyState {
     LanLobbyState_Joined = 2,
     LanLobbyState_Failed = 3,
 };
+
+// Strong VT2->Darktide host/create correspondence candidates.
+static constexpr unsigned long kLanLobbyCreateModeFlagOffsetCandidate = 0x68;
+static constexpr unsigned long kLanLobbyCreateConfigOffsetCandidate = 0x78;
+static constexpr unsigned long kLanLobbyCreateStateOffsetCandidate = 0x7C;
 
 // Recovered packet ids.
 enum LanPacketId {
@@ -97,8 +103,8 @@ enum LanPacketId {
 };
 
 // Outer LAN envelope helpers.
-static constexpr unsigned long kLanOuterCreateChannelHandlerRva = 0x0056EE70;
-static constexpr unsigned long kLanOuterLobbyChannelHandlerRva = 0x0056F9C0;
+static constexpr unsigned long kLanOuterCreateChannelHandlerRva = 0x0056EED0;
+static constexpr unsigned long kLanOuterLobbyChannelHandlerRva = 0x0056FA20;
 
 // Likely LanClient fields.
 static constexpr unsigned long kLanClientBrowserTransportOffset = 0x18;
@@ -113,6 +119,9 @@ static constexpr unsigned long kLanClientKnownPeersOwnerOffset = 0x5A0;
 // Known peer/member record layout in the 0x60-byte member array.
 static constexpr unsigned long kLanMemberRecordSize = 0x60;
 static constexpr unsigned long kLanMemberIdOffset = 0x00;
+static constexpr unsigned long kLanMemberSendTargetHandleOffset = 0x08;
+static constexpr unsigned long kLanMemberCallbackHandleAOffset = 0x0C;
+static constexpr unsigned long kLanMemberCallbackHandleBOffset = 0x10;
 static constexpr unsigned long kLanMemberAddressStringOffset = 0x14;
 static constexpr unsigned long kLanMemberDataSizeOffset = 0x30;
 static constexpr unsigned long kLanMemberDataCapacityOffset = 0x34;
@@ -128,7 +137,7 @@ static constexpr unsigned long kLanAdmissionBufferOwnerAOffset = 0x40;
 static constexpr unsigned long kLanAdmissionBufferOwnerBOffset = 0x58;
 
 // LanLobbyBrowser object.
-static constexpr unsigned long kLanLobbyBrowserVtableRva = 0x00F1F2F8;
+static constexpr unsigned long kLanLobbyBrowserVtableRva = 0x00F1C358;
 static constexpr unsigned long kLanLobbyBrowserSize = 0xB8;
 static constexpr unsigned long kLanLobbyBrowserTransportOffset = 0x50;
 static constexpr unsigned long kLanLobbyBrowserEntriesCountOffset = 0x58;

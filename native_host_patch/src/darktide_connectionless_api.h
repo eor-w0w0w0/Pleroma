@@ -56,8 +56,8 @@ static constexpr unsigned char kBrowserEvent11Token = EncodeBrowserEventToken(0x
 static constexpr unsigned char kBrowserEvent13Token = EncodeBrowserEventToken(0x13);
 
 // Earliest currently identified host-side request-connection receive/parser window.
-static constexpr unsigned long kRequestConnectionReceiveParserStartRva = 0x003383D0;
-static constexpr unsigned long kRequestConnectionReceiveParserEndRva = 0x00338C52;
+static constexpr unsigned long kRequestConnectionReceiveParserStartRva = 0x003383A0;
+static constexpr unsigned long kRequestConnectionReceiveParserEndRva = 0x00338C22;
 
 // Outer envelope carries a fixed 0x25-byte text field after the 64-bit key.
 // Parser treatment indicates it is a fixed 36-byte text string plus NUL and is

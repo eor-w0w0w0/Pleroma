@@ -20,11 +20,11 @@ static constexpr unsigned long kPeerBackingEntrySize = 0x1460;
 static constexpr unsigned long kPeerBackingPeerIdOffset = 0x10;
 
 // Important helpers/consumers.
-static constexpr unsigned long kRemovePeerRva = 0x00337040;
-static constexpr unsigned long kGetPeerCountRva = 0x003377F0;
-static constexpr unsigned long kGetPeerIdByIndexRva = 0x00337800;
-static constexpr unsigned long kGetGameSessionHostRva = 0x003378C0;
-static constexpr unsigned long kHostPromotionLikePathRva = 0x00335D36;
+static constexpr unsigned long kRemovePeerRva = 0x00337010;
+static constexpr unsigned long kGetPeerCountRva = 0x003377C0;
+static constexpr unsigned long kGetPeerIdByIndexRva = 0x003377D0;
+static constexpr unsigned long kGetGameSessionHostRva = 0x00337890;
+static constexpr unsigned long kHostPromotionLikePathRva = 0x00335D06;
 
 } // namespace gamesession
 } // namespace darktide

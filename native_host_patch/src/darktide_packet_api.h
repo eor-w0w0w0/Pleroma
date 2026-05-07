@@ -20,17 +20,19 @@ constexpr unsigned char EncodeConnectionlessKind(unsigned char kind)
 }
 
 // Generic bitstream helpers.
-static constexpr unsigned long kWriteBits32Rva = 0x00332E30;
-static constexpr unsigned long kWriteBits64Rva = 0x00330DE0;
-static constexpr unsigned long kWriteBlobBitsRva = 0x00332F20;
-static constexpr unsigned long kReadBits32Rva = 0x00330ED0;
-static constexpr unsigned long kReadBits64Rva = 0x00331050;
-static constexpr unsigned long kSkipBitsRva = 0x00330FB0;
-static constexpr unsigned long kReadBytesRva = 0x00330D80;
+static constexpr unsigned long kWriteBits32Rva = 0x00332E00;
+static constexpr unsigned long kWriteBits64Rva = 0x00330DB0;
+static constexpr unsigned long kWriteBlobBitsRva = 0x00332EF0;
+static constexpr unsigned long kReadBits32Rva = 0x00330EA0;
+static constexpr unsigned long kReadBits64Rva = 0x00331020;
+static constexpr unsigned long kSkipBitsRva = 0x00330F80;
+static constexpr unsigned long kReadBytesRva = 0x00333030;
+static constexpr unsigned long kBuildJoinReplyFromTextRva = 0x006C5690;
+static constexpr unsigned long kBuildJoinReplyFromIPv4Rva = 0x006C5780;
 
 // Winsock helpers observed in LAN packet send paths.
-static constexpr unsigned long kGetSockNameImportRva = 0x00E6BFC8;
-static constexpr unsigned long kNtohsImportRva = 0x00E6BEF0;
+static constexpr unsigned long kGetSockNameImportRva = 0x00E6AFC8;
+static constexpr unsigned long kNtohsImportRva = 0x00E6AEF0;
 
 // Bitstream helper signatures inferred from static analysis.
 using WriteBits32Fn = void (*)(BitCursor *cursor, unsigned int value, unsigned int bit_count);
@@ -40,6 +42,8 @@ using ReadBits32Fn = unsigned int (*)(BitCursor *cursor, unsigned int bit_count)
 using ReadBits64Fn = unsigned long long (*)(BitCursor *cursor, unsigned int bit_count);
 using SkipBitsFn = void (*)(BitCursor *cursor, unsigned int bit_count);
 using ReadBytesFn = void (*)(BitCursor *cursor, void *dst, unsigned int byte_count);
+using BuildJoinReplyFromTextFn = void *(*)(void *out_packet, const char *addr_text, unsigned int dest_handle16);
+using BuildJoinReplyFromIPv4Fn = void *(*)(void *out_packet, unsigned int ipv4_be, unsigned int dest_handle16);
 
 // Transport send path observations.
 // Current best shape for transport vfunc +0x108:

@@ -35,23 +35,24 @@ using OuterCallbackFn = int (*)(void *context, unsigned long long peer_id, unsig
 // Channel callback adapters appear to receive channel/listener id separately,
 // then normalize into the same general pattern.
 using ChannelCallbackFn = int (*)(void *context, unsigned long long peer_id, unsigned int channel_or_listener_id, unsigned int message_id, void *packet_reader);
+using SendInnerPayloadFn = int (*)(void *transport, unsigned int target_handle, unsigned int system_id, unsigned int reliable, const void *payload, unsigned int payload_bits, unsigned int trailing_zero);
 
 // Known registered callbacks.
-static constexpr unsigned long kRegisterOuterCallbackImplRva = 0x00351330;
-static constexpr unsigned long kLanConnectOuterCallbackRva = 0x0056E4F0;
-static constexpr unsigned long kLanCreateChannelCallbackRva = 0x0056EE70;
-static constexpr unsigned long kLanConnectionlessOuterThunkRva = 0x0056F5B0;
-static constexpr unsigned long kLanConnectionlessOuterCallbackRva = 0x0056F5D0;
-static constexpr unsigned long kLanLobbyInnerThunkRva = 0x0056E6C0;
-static constexpr unsigned long kLanLobbyInnerCallbackRva = 0x0056E6E0;
-static constexpr unsigned long kLanChannelEnvelopeThunkRva = 0x0056F9C0;
-static constexpr unsigned long kLanChannelEnvelopeCallbackRva = 0x0056F9E0;
+static constexpr unsigned long kRegisterOuterCallbackImplRva = 0x00351390;
+static constexpr unsigned long kLanConnectOuterCallbackRva = 0x0056E550;
+static constexpr unsigned long kLanCreateChannelCallbackRva = 0x0056EED0;
+static constexpr unsigned long kLanConnectionlessOuterThunkRva = 0x0056F610;
+static constexpr unsigned long kLanConnectionlessOuterCallbackRva = 0x0056F630;
+static constexpr unsigned long kLanLobbyInnerThunkRva = 0x0056E720;
+static constexpr unsigned long kLanLobbyInnerCallbackRva = 0x0056E740;
+static constexpr unsigned long kLanChannelEnvelopeThunkRva = 0x0056FA20;
+static constexpr unsigned long kLanChannelEnvelopeCallbackRva = 0x0056FA40;
 
 // Token/record lifecycle helpers inferred from cleanup paths.
 static constexpr unsigned long kBrowserRecordPushRva = 0x005702F0;
-static constexpr unsigned long kBrowserRecordCleanupRva = 0x0056FB60;
+static constexpr unsigned long kBrowserRecordCleanupRva = 0x0056FC00;
 static constexpr unsigned long kBrowserRecordVectorResizeRva = 0x00570020;
-static constexpr unsigned long kBrowserRecordElementDtorRva = 0x0056F930;
+static constexpr unsigned long kBrowserRecordElementDtorRva = 0x0056F990;
 static constexpr unsigned long kTokenMapFindSlotRva = 0x00570BD0;
 static constexpr unsigned long kTokenMapGetOrInsertSlotRva = 0x00570C80;
 static constexpr unsigned long kTokenMapEraseSlotRva = 0x00570A20;
@@ -61,7 +62,7 @@ static constexpr unsigned long kTokenMapGetOrCreateEntryRva = 0x00570990;
 static constexpr unsigned long kPeerAddressUpdateRva = 0x00587380;
 static constexpr unsigned long kPeerAddressAddIfMissingRva = 0x00586F30;
 static constexpr unsigned long kPeerAddressOverwriteRva = 0x00586F80;
-static constexpr unsigned long kResolveCallbackSourceAddressRva = 0x0056E0D0;
+static constexpr unsigned long kResolveCallbackSourceAddressRva = 0x0056E070;
 static constexpr unsigned long kPeerAddressCountOffset = 0x80;
 static constexpr unsigned long kPeerAddressEntriesOffset = 0x88;
 static constexpr unsigned long kPeerAddressEntrySize = 0x30;

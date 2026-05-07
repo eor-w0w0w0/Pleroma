@@ -752,6 +752,18 @@ Why this matters:
 - inner join-request handling gives a port later, but by then the host has already committed to the join path
 - the request-connection receive/parser appears to be the earliest place where the host can know both the peer identity and the port needed for address upsert/admission
 
+## Canonical option-1 host sequence
+
+1. capture browser callback registration
+2. receive browser callback event `0x11`
+3. resolve callback `source_id -> sockaddr_in6`
+4. send synthetic outer `0x13`
+5. wait for request-connection receive/parser `0x1403383D0-0x140338C52`
+6. upsert `peer_id -> sockaddr_in6` with `0x140587380`
+7. admit member with `0x14056E0D0`
+8. send synthetic inner `0x17`
+9. rely on stock `0x19 / 0x14 / 0x15`
+
 ## GameSession host state
 
 - `GameSession +0xd0` is the live `_game_session_host` peer-id field

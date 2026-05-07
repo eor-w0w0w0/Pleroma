@@ -140,3 +140,14 @@ events:
         - "/home/bocor/.resh/bin"
         - "/home/bocor/stl/prefix"
 ...
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:212 (message)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      The system is: Linux - 7.0.0-1-cachyos - x86_64
+...

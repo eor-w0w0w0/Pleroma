@@ -81,10 +81,8 @@ SoloPlayModView.on_enter = function (self)
 
 	self._widgets_by_name.havoc_modifier_lock.content.hotspot.pressed_callback = callback(self, "cb_on_havoc_modifier_lock")
 	self._widgets_by_name.normal_start.content.hotspot.pressed_callback = callback(self, "cb_on_normal_start")
-	self._widgets_by_name.normal_start_multiplayer.content.hotspot.pressed_callback = callback(self, "cb_on_normal_start_multiplayer")
 	self._widgets_by_name.havoc_randomize.content.hotspot.pressed_callback = callback(self, "cb_on_havoc_randomize")
 	self._widgets_by_name.havoc_start.content.hotspot.pressed_callback = callback(self, "cb_on_havoc_start")
-	self._widgets_by_name.havoc_start_multiplayer.content.hotspot.pressed_callback = callback(self, "cb_on_havoc_start_multiplayer")
 
 	self._modifier_customizable = mod:get("havoc_modifiers_customizable") or false
 	self:_update_modifiers_lock()
@@ -358,9 +356,7 @@ SoloPlayModView._set_exclusive_focus_on_setting = function (self, widget_name)
 		self._widgets_by_name.havoc_modifier_lock.content.hotspot.disabled = true
 		self._widgets_by_name.havoc_randomize.content.hotspot.disabled = true
 		self._widgets_by_name.normal_start.focus_disabled = true
-		self._widgets_by_name.normal_start_multiplayer.focus_disabled = true
 		self._widgets_by_name.havoc_start.focus_disabled = true
-		self._widgets_by_name.havoc_start_multiplayer.focus_disabled = true
 
 	else
 		self._modifier_grid:disable_input(false)
@@ -378,9 +374,7 @@ SoloPlayModView._set_exclusive_focus_on_setting = function (self, widget_name)
 		self._widgets_by_name.havoc_modifier_lock.content.hotspot.disabled = false
 		self._widgets_by_name.havoc_randomize.content.hotspot.disabled = false
 		self._widgets_by_name.normal_start.focus_disabled = false
-		self._widgets_by_name.normal_start_multiplayer.focus_disabled = false
 		self._widgets_by_name.havoc_start.focus_disabled = false
-		self._widgets_by_name.havoc_start_multiplayer.focus_disabled = false
 	end
 end
 
@@ -472,20 +466,12 @@ SoloPlayModView.cb_on_normal_start = function (self, widget, entry)
 	self:_start_game("normal")
 end
 
-SoloPlayModView.cb_on_normal_start_multiplayer = function (self, widget, entry)
-	self:_start_game("normal_multiplayer")
-end
-
 SoloPlayModView.cb_on_havoc_randomize = function (self, widget, entry)
 	self:_regen_havoc()
 end
 
 SoloPlayModView.cb_on_havoc_start = function (self, widget, entry)
 	self:_start_game("havoc")
-end
-
-SoloPlayModView.cb_on_havoc_start_multiplayer = function (self, widget, entry)
-	self:_start_game("havoc_multiplayer")
 end
 
 SoloPlayModView._on_back_pressed = function (self)
@@ -541,17 +527,9 @@ SoloPlayModView.update = function (self, dt, t, input_service)
 	if normal_start then
 		normal_start.content.hotspot.disabled = solo_unavailable or normal_start.focus_disabled or false
 	end
-	local normal_start_multiplayer = self._widgets_by_name.normal_start_multiplayer
-	if normal_start_multiplayer then
-		normal_start_multiplayer.content.hotspot.disabled = solo_unavailable or normal_start_multiplayer.focus_disabled or false
-	end
 	local havoc_start = self._widgets_by_name.havoc_start
 	if havoc_start then
 		havoc_start.content.hotspot.disabled = solo_unavailable or havoc_start.focus_disabled or false
-	end
-	local havoc_start_multiplayer = self._widgets_by_name.havoc_start_multiplayer
-	if havoc_start_multiplayer then
-		havoc_start_multiplayer.content.hotspot.disabled = solo_unavailable or havoc_start_multiplayer.focus_disabled or false
 	end
 
 	self:_handle_input(input_service, dt, t)

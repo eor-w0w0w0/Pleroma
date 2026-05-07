@@ -13,6 +13,22 @@ Therefore the likely path forward is not “call hidden host API”, but:
 3. Register custom outer callbacks on the surviving transport registry rather than replacing stock ones.
 4. Synthesize the missing host-side message flow.
 
+## Post-update RVA rebase status
+
+The core native headers have now been rebased against the updated Darktide build.
+
+Currently treated as validated against the new binary:
+
+- LAN/browser wrappers
+- browser callback/parser thunks
+- outer/channel callback heads
+- `LanLobby`, `LanLobbyBrowser`, and `LanClient` wrapper vtables/base vtables
+- low-level packet helpers
+- key `GameSession` helper RVAs
+- key lobby/member send/build helpers
+
+This does not make the binary future-proof, but it does mean the active implementation work is no longer resting on obviously stale pre-update addresses.
+
 ## VT2-guided conclusion
 
 Installed VT2 binary analysis materially strengthened the host-side direction:
@@ -48,6 +64,25 @@ Current best decomposition:
 - host join-request receive/accept (`inner 0x1c` -> `0x17`)
 
 This is a much narrower target than “rebuild all host networking”.
+
+## VT2-guided Darktide host bootstrap target
+
+Current strongest field correspondences from VT2 host/create constructor to Darktide are:
+
+- generated/random lobby id -> `LanLobby+0x58`
+- create/host state -> `LanLobby+0x7C`
+- create/max-members config -> `LanLobby+0x78`
+- backend transport/listener owner -> `LanLobby+0x68`
+
+Current code-side planning now reflects that with a disabled `SyntheticHostLanLobbyPlan` describing:
+
+- `lobby_id`
+- `max_members`
+- `state`
+- `game_session_host`
+- whether control/channel/join listener families are expected to be registered
+
+This does not create a host lobby yet; it formalizes the intended host-mode target shape for later implementation.
 
 ### Join-side refinement
 
@@ -93,6 +128,15 @@ Current code-side primitive set now exists for later admission work:
 - upsert `peer_id -> address` via `0x140587380`
 - synthetic join accept plan struct
 - synthetic admission record plan struct
+- direct `perform_synthetic_member_admission(...)` helper that chains:
+  - address upsert
+  - `0x14056E0D0`
+- `build_synthetic_join_accept_packet(...)` helper for the minimal inner `0x17` accept frame
+- `send_synthetic_join_accept(...)` helper that:
+  - finds the admitted member record
+  - reads its send-target handle at `member+0x08`
+  - builds the stock-like `0x17` packet with `0x1406C5780`
+  - emits it through transport `+0x108`
 
 ## Current highest-impact strike-team host mismatch
 
@@ -203,6 +247,91 @@ Why this order matters:
 - synthetic `0x17` alone is not enough
 - admitting first gives the later stock member/lobby senders coherent state to serialize
 
+## Canonical option-1 staged host sequence
+
+The current best end-to-end host-side plan is now:
+
+1. capture the real browser callback registration via `0x140351330`
+2. on browser callback event `0x11`, resolve `source_id -> sockaddr_in6`
+3. send synthetic outer `0x13`
+4. wait for the client to enter the request-connection / join-side parser path
+5. at `0x1403383D0-0x140338C52`, use the first point where stable `peer_id` and source `port` coexist
+6. call `0x140587380` to upsert `peer_id -> sockaddr_in6`
+7. call `0x14056E0D0` to admit/add the member into the real `LanLobby`
+8. send synthetic inner `0x17` accept reply
+9. let stock `0x19 / 0x14 / 0x15` senders take over via dirty flags and stock setters
+
+This is now the clearest integration target for option 1.
+
+Current most concrete join-side hook target:
+
+- request-connection parser post-success edge around `0x1403387F9-0x140338818`
+
+Current input mapping at that edge:
+
+- `peer_id` = stable parser source id
+- `port_host_order` = recoverable parsed request port
+- `ipv4_host_order` = derive from resolved `sockaddr_in6` (`addr[12..15]`)
+- `lan_lobby` = resolve by matching parsed lobby id against `LanLobby+0x58`
+
+Current code-side state:
+
+- the host-side post-discovery path is now represented by a single disabled helper:
+  - `run_synthetic_join_sequence(...)`
+- it performs, in order:
+  1. `perform_synthetic_member_admission(...)`
+  2. `send_synthetic_join_accept(...)`
+
+So the post-discovery host join sequence now exists in code as one coherent step, even though it is not yet wired to a live hook.
+
+Host-side state checkpoints now logged by those helpers:
+
+- `HOST_ADMISSION_PERFORMED`
+- `HOST_ADMISSION_STATE`
+- `HOST_JOIN_ACCEPT_SENT` / `HOST_JOIN_ACCEPT_FAILED_*`
+- `HOST_JOIN_ACCEPT_STATE` / `HOST_JOIN_ACCEPT_FAILED_STATE`
+
+Those lines report live `LanLobby` state after admission / `0x17`, including:
+
+- `lobby_id`
+- `game_session_host`
+- `members_count`
+- dirty flags
+
+Next hook target now scaffolded:
+
+- request-connection parser window
+  - start: `0x1403383A0`
+  - end: `0x140338C22`
+- current code includes a disabled hook scaffold for this parser window
+- once enabled and refined, this is the intended live insertion point for calling `run_synthetic_join_sequence(...)`
+- a small logging stub (`log_request_connection_hook_plan(...)`) is now present to reflect the intended extracted inputs there:
+  - `peer_id`
+  - `port`
+  - `lobby_id`
+
+Planned safe-fail behavior:
+
+- the future parser hook should only call the synthetic join sequence if all of these are present:
+  - valid `lan_client`
+  - valid transport
+  - non-zero `lobby_id`
+  - non-zero `peer_id`
+  - active `LanLobby*` resolved from `lobby_id`
+  - resolvable `peer_id -> sockaddr_in6`
+- otherwise it should log the first missing prerequisite and return without mutating state
+
+Additional helper now present:
+
+- `find_active_lan_lobby_by_id(...)`
+- `run_synthetic_join_sequence_from_lobby_and_peer(...)`
+
+This closes the last obvious data gap in the canonical host sequence by giving the future hook path a stock-shaped way to resolve:
+
+- `LanLobby*` from `lobby_id`
+- `sockaddr_in6` from `peer_id`
+- then run admission + `0x17` as one operation
+
 Addressing fallback now known:
 
 - stock code also has a `u64 source_id -> sockaddr_in6` resolution path (`0x14056e0d0` + `0x140587380`)
@@ -227,6 +356,23 @@ Current status of the discovery responder:
 - remaining uncertainty is now runtime-only:
   - whether the captured browser transport is the true live browser callback transport in the armed run
   - whether the synthetic `0x13` frame is accepted end-to-end by the retail browser path
+
+Current host/client sequence checkpoints:
+
+Host should now log:
+- browser callback registration
+- browser callback event `0x11`
+- synthetic reply send attempt
+- synthetic reply send count / source id / lobby id
+
+Client should now log:
+- `HOSTED_FOLLOW_RECEIVED ...`
+- browser refresh result
+- visibility of the expected hosted lobby
+- `HOSTED_FOLLOW_READY_TO_JOIN ...`
+- handshake/connect attempt lines
+
+That makes the next runtime correlation much more deterministic than before.
 
 Useful recovered framing detail:
 
@@ -263,6 +409,25 @@ Encouraging browser-visibility result:
   - a consistent `u64 lobby_id`
   - a valid fixed-width 0x25 browser name field
 - later `LanLobby` sync (`0x19`, `0x14`, `0x15`) is likely needed for real join/bootstrap, but not just to make a lobby appear in browser results
+
+## Client follow path after lobby join
+
+Current source-level conclusion:
+
+- reaching `Network.join_lan_lobby(lobby_id)` is not enough
+- stock mission/hub boot then explicitly creates `ConnectionClient:new(...)`
+
+So the eventual automatic follow path likely needs this ordering:
+
+1. browser result visible
+2. handshake/connect
+3. `Network.join_lan_lobby(...)`
+4. wait for lobby `joined`
+5. explicit `ConnectionClient` bootstrap
+6. `Managers.connection:set_connection_client(...)`
+7. stock `LoadingClient` path
+
+The main currently missing input for step 5 is a valid `jwt_ticket` / server-details equivalent.
 
 Current seeding rule in code:
 
@@ -496,6 +661,15 @@ Safety gates on those flags:
 - native worker now polls more slowly and logs transport state only on change to reduce startup overhead
 - registration capture remains fully off unless the dedicated marker file is present
 
+Default diagnostics policy now:
+
+- passive browser validation is on by default
+- passive transport/browser/session state logging is on by default
+- active synthetic behavior still remains opt-in:
+  - synthetic discovery reply
+  - registration capture hook
+  - request-connection parser hook
+
 Runtime cleanup behavior:
 
 - if browser-host feature flags are turned off while the game is still running, the native worker now unregisters the browser callback automatically
@@ -557,6 +731,16 @@ Latest confidence increase:
 - browser thunk `0x14056F5B0` appears unique in this build
 - the registration helper at `0x140351330` only uses the first 5 logical args and preserves the `out_handle` return convention
 - so the registration-capture hook is now the cleanest known browser attachment strategy for option 1
+
+Current runtime policy again:
+
+- `host_test_enabled` now re-arms registration capture automatically again, because the relevant RVAs were rebased and the stale-address risk was the main reason it had been forced off
+
+Important same-run fix:
+
+- the native worker now attempts `maybe_install_registration_capture_hook()` after each feature-flag reload
+- this means pressing the hosted button in the current run can arm capture without needing a restart just for hook installation
+- worker poll interval is now `1s` instead of `3s`, to reduce same-run delay between the hosted button press and native browser/capture arming
 
 ## First Two-Client Discovery Smoke Test
 

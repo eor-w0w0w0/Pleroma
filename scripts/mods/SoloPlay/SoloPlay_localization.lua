@@ -28,6 +28,9 @@ return {
 		["zh-cn"] = Localize("loc_group_finder_difficulty_auric") .. "%s",
 		["zh-tw"] = Localize("loc_group_finder_difficulty_auric") .. "%s",
 	},
+	format_expedition = {
+		en = Localize("loc_zone_expeditions") .. ": %s",
+	},
 
 	group_keybinds = {
 		en = "Keybinds",
@@ -54,6 +57,10 @@ return {
 		["zh-cn"] = "修改项",
 		ru = "Модификаторы",
 		["zh-tw"] = "修改項",
+	},
+	mission_brief_enabled = {
+		en = "Mission Brief",
+		["zh-cn"] = "任务简报",
 	},
 	friendly_fire_enabled = {
 		en = "Friendly fire",
@@ -91,22 +98,16 @@ return {
 		["zh-tw"] = "單人遊戲",
 	},
 	button_start_normal = {
-		en = "Play Solo / Private Mission",
+		en = "Play Normal Game",
 		["zh-cn"] = "开始常规游戏",
 		ru = "Запуск обычной игры",
 		["zh-tw"] = "開始一般遊戲",
 	},
-	button_start_normal_multiplayer = {
-		en = "Start With Strike Team (Host)",
-	},
 	button_start_havoc = {
-		en = "Play Offline Custom Havoc",
+		en = "Play Havoc Game",
 		["zh-cn"] = "开始浩劫游戏",
 		ru = "Запуск Верной смерти",
 		["zh-tw"] = "開始浩劫遊戲",
-	},
-	button_start_havoc_multiplayer = {
-		en = "Start Havoc With Strike Team (Host)",
 	},
 	button_randomize = {
 		en = "Regenerate",
@@ -194,9 +195,8 @@ return {
 	},
 
 	tip_solo_offline = {
-		en = "Solo missions and custom Havoc are mainly for offline testing, and may differ from online gameplay.\n"
-			.. "Normal missions with a strike team use matching live mission-board entries when available.\n"
-			.. "Offline play does not grant rewards or progression.",
+		en = "Offline game is mainly for testing, the experience may differ from online gameplay.\n"
+			.. "You can't get any rewards or progression in offline game.",
 		["zh-cn"] = "离线游戏主要用于测试，其体验可能与在线游戏不同。\n"
 			.. "你无法从离线游戏中获得任何奖励或进度。",
 		ru = "Офлайн-игра предназначена в основном для тестирования, впечатления от неё могут отличаться от онлайн-игры.\n"
@@ -210,83 +210,11 @@ return {
 		ru = "Примечание: некоторые параметры могут не поддерживаться, не иметь эффекта или вызывать вылеты!",
 		["zh-tw"] = "注意：某些選項可能不受支援、無效或導致遊戲崩潰。",
 	},
-	tip_multiplayer_hosted = {
-		en = "Experimental: starts a player-hosted mission for your current strike team instead of the normal solo/private path.",
-	},
 	msg_not_available = {
 		en = "Solo Play is currently unavailable",
 		["zh-cn"] = "单人游戏目前不可用",
 		ru = "В настоящее время режим соло-игры недоступен",
 		["zh-tw"] = "單人遊戲目前不可用",
-	},
-	msg_not_in_hub_or_mission = {
-		en = "Solo Play can only start from the hub, Psykhanium, or main menu.",
-	},
-	msg_private_requires_party = {
-		en = "Private strike-team launch requires at least one party member.",
-	},
-	msg_private_team_not_available = {
-		en = "All strike-team members must be in the Mourningstar before starting a private mission.",
-	},
-	msg_private_no_live_mission = {
-		en = "No matching live mission-board mission was found for this selection.",
-	},
-	msg_havoc_strike_team_unavailable = {
-		en = "Custom Havoc with a strike team is not available yet. Offline custom Havoc still works.",
-	},
-	msg_party_host_missing_lobby = {
-		en = "Party-hosted launch needs an active engine lobby in the current hub session.",
-	},
-	msg_netdump_done = {
-		en = "Dumped network surfaces to the console log.",
-	},
-	msg_rpcdump_done = {
-		en = "Dumped host bootstrap RPC info to the console log.",
-	},
-	msg_partydump_done = {
-		en = "Dumped strike-team / session state to the console log.",
-	},
-	msg_sessionbootdump_done = {
-		en = "Dumped multiplayer session boot state to the console log.",
-	},
-	msg_loadingdump_done = {
-		en = "Dumped loading host/client state to the console log.",
-	},
-	msg_browser_create_failed = {
-		en = "Failed to create LAN browser.",
-	},
-	msg_browser_refreshed = {
-		en = "Triggered LAN browser refresh; check the native log.",
-	},
-	msg_browser_refresh_failed = {
-		en = "LAN browser refresh failed; see the console log.",
-	},
-	msg_browser_status_dumped = {
-		en = "Dumped LAN browser status.",
-	},
-	msg_browser_missing = {
-		en = "No persistent LAN browser.",
-	},
-	msg_browser_cleared = {
-		en = "Cleared persistent LAN browser.",
-	},
-	msg_native_host_test_enabled = {
-		en = "Enabled native browser callback + synthetic discovery reply for the next host launch.",
-	},
-	msg_native_host_test_disabled = {
-		en = "Disabled native browser callback + synthetic discovery reply marker files.",
-	},
-	msg_native_host_test_status = {
-		en = "Dumped native host test marker-file status.",
-	},
-	msg_native_registration_capture_enabled = {
-		en = "Enabled native registration-capture hook for the next launch.",
-	},
-	msg_native_registration_capture_disabled = {
-		en = "Disabled native registration-capture hook marker file.",
-	},
-	msg_native_flag_error = {
-		en = "Failed to update native host test marker files.",
 	},
 
 	havoc_faction_mixed = {
